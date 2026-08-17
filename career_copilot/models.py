@@ -11,6 +11,11 @@ class CareerFact:
     kind: str
     confidence: str = "verified"
     source: str = "master_resume"
+    section: str = ""
+    employer: str = ""
+    role: str = ""
+    start_year: int | None = None
+    end_year: int | None = None
 
 
 @dataclass
@@ -52,3 +57,4 @@ def profile_from_dict(data: dict[str, Any]) -> CareerProfile:
         updated_at=data.get("updated_at", ""),
         schema_version=data.get("schema_version", 1),
     )
+

@@ -1,4 +1,4 @@
-# Career Copilot MVP
+# Career Copilot
 
 A private, local-first career assistant that behaves like a skeptical senior headhunter. It analyzes jobs, explains every match using verified career facts, and drafts tailored materials without applying or inventing experience.
 
@@ -40,6 +40,16 @@ $env:CAREER_COPILOT_PORT = "9000"
 python -m career_copilot
 ```
 
+## Public-release privacy and security
+
+Career Copilot binds only to `127.0.0.1`, does not fetch URLs, contact employers, or use external AI services. Resume, job, and analysis data remain in the ignored `data/` directory. Never commit real resumes, generated PDFs, secrets, or analysis exports. The server rejects cross-origin JSON writes, limits request size, disables caching, and sets restrictive browser security headers. This is a local single-user tool; do not expose its port to a network.
+
+The saved master resume is immutable during analysis, tailoring, and export. Tailoring selects exact source facts, validates both evidence IDs and exact claim text, and reports SHA-256 before/after values. A mismatched claim fails closed. Generated materials are drafts and require human review.
+
+## PDF export
+
+`POST /api/export` with JSON `{ "kind": "resume" }` or `{ "kind": "cover_letter" }` returns a dependency-free, paginated PDF. The format prioritizes readable typography, predictable margins, and reliable text extraction.
+
 ## Optional AI drafting
 
 The MVP deliberately works without an external model. The architecture leaves `career_copilot/llm.py` as the integration boundary for adding an approved model provider. The current release keeps all processing local and deterministic so its evidence and safety behavior are easy to test before adding model variability.
@@ -70,3 +80,4 @@ python -m unittest discover -s tests -v
 - `web/` — dependency-free interface
 
 The next sensible increments are interview-prep packets, a job/application tracker, URL fetching with explicit user review, and an LLM adapter that must return schema-valid JSON with fact citations.
+
