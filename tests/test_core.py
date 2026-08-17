@@ -4,6 +4,8 @@ from career_copilot.analyzer import analyze, extract_salary
 from career_copilot.profile import build_profile
 from career_copilot.tailor import tailor
 from career_copilot.validator import validate_fact_ids
+from career_copilot.validator import validate_claims
+from career_copilot.pdf_export import render_pdf
 
 
 RESUME = """Jordan Example
@@ -43,12 +45,30 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(materials["validation"]["valid"])
         self.assertTrue(materials["master_resume_unchanged"])
         self.assertEqual(self.profile.master_resume, RESUME.strip())
+        self.assertEqual(materials["change_report"]["before_sha256"], materials["change_report"]["after_sha256"])
 
     def test_unknown_fact_is_rejected(self):
         self.assertFalse(validate_fact_ids(self.profile, ["fact_invented"])["valid"])
 
     def test_salary_parser_does_not_call_estimate_posted(self):
         self.assertEqual(extract_salary(JOB)["source"], "employer_posted")
+
+    def test_wrapped_resume_lines_are_reassembled_with_chronology(self):
+        profile = build_profile({"master_resume": """Alex Example\nProfessional Experience\nAcme Corp\nPrincipal Architect | 2022 - Present\n- Led a secure platform modernization across regulated\nenterprise environments with zero unplanned downtime.\nOlder Corp\nEngineer | 2018 - 2021\n- Managed Linux and storage operations for critical systems."""})
+        claim = next(f for f in profile.facts if "zero unplanned" in f.text)
+        self.assertEqual(claim.start_year, 2022)
+        self.assertIn("regulated enterprise environments", claim.text)
+
+    def test_claim_text_cannot_be_embellished_under_valid_id(self):
+        fact = self.profile.facts[0]
+        result = validate_claims(self.profile, [{"fact_id": fact.id, "text": fact.text + " and doubled revenue"}])
+        self.assertFalse(result["valid"])
+
+    def test_pdf_is_paginated_and_well_formed(self):
+        pdf = render_pdf("Resume", "\n".join(f"Evidence line {i}" for i in range(110)))
+        self.assertTrue(pdf.startswith(b"%PDF-1.4"))
+        self.assertGreaterEqual(pdf.count(b"/Type /Page"), 3)
+        self.assertTrue(pdf.endswith(b"%%EOF"))
 
 
 if __name__ == "__main__":

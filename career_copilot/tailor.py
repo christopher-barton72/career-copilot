@@ -1,23 +1,19 @@
 from __future__ import annotations
-
+import hashlib
 from typing import Any
-
 from .models import CareerProfile
-from .validator import validate_fact_ids
-
+from .validator import validate_claims
 
 def tailor(profile: CareerProfile, analysis: dict[str, Any]) -> dict[str, Any]:
-    evidence = analysis.get("evidence", [])[:8]
-    ids = [item["fact_id"] for item in evidence]
-    validation = validate_fact_ids(profile, ids)
-    if not validation["valid"]:
-        raise ValueError("Tailored content referenced unverified facts.")
-    title = analysis["job"].get("title") or "the target role"
-    company = analysis["job"].get("company") or "the organization"
-    bullets = "\n".join(f"- {item['fact']} [{item['fact_id']}]" for item in evidence)
-    skills = ", ".join(analysis.get("matched_skills", [])) or "See verified experience below"
-    resume = f"""{profile.name}\n{profile.headline}\n\nTARGET\n{title} at {company}\n\nRELEVANT SKILLS\n{skills}\n\nSELECTED VERIFIED EXPERIENCE\n{bullets}\n\nSOURCE NOTE\nThis tailored draft is derived only from the unchanged master resume. Bracketed IDs map each claim to the career-truth profile."""
-    top = evidence[:3]
-    proof = "\n".join(f"- {item['fact']} [{item['fact_id']}]" for item in top)
-    cover = f"""Dear Hiring Team,\n\nI am interested in the {title} opportunity at {company}. My background aligns with several priorities in the role, supported by these verified examples:\n\n{proof}\n\nI would welcome a conversation about how this experience could support your team. I have intentionally kept this letter grounded in my verified career history and would be glad to add context in an interview.\n\nSincerely,\n{profile.name}"""
-    return {"tailored_resume": resume, "cover_letter": cover, "used_fact_ids": ids, "validation": validation, "master_resume_unchanged": True}
+    evidence=analysis.get("evidence",[])[:8]; by_id={f.id:f for f in profile.facts}
+    evidence=sorted(evidence,key=lambda x:(by_id[x["fact_id"]].start_year or 0),reverse=True)
+    claims=[{"fact_id":x["fact_id"],"text":x["fact"]} for x in evidence]; validation=validate_claims(profile,claims)
+    if not validation["valid"]: raise ValueError("Tailored content referenced unsupported or altered claims.")
+    title=analysis["job"].get("title") or "the target role"; company=analysis["job"].get("company") or "the organization"
+    bullets="\n".join(f"- {x['fact']} [{x['fact_id']}]" for x in evidence)
+    skills=", ".join(analysis.get("matched_skills",[])) or "See verified experience below"
+    resume=f"{profile.name}\n{profile.headline}\n\nTARGET\n{title} at {company}\n\nRELEVANT SKILLS\n{skills}\n\nSELECTED VERIFIED EXPERIENCE (REVERSE CHRONOLOGICAL)\n{bullets}\n\nSOURCE NOTE\nThis draft is derived only from the unchanged master resume."
+    paragraphs="\n\n".join(f"One relevant example from my background is: {x['fact']} [{x['fact_id']}]" for x in evidence[:3])
+    cover=f"Dear Hiring Team,\n\nI am writing to express interest in the {title} opportunity at {company}. The role's priorities overlap with experience documented in my career history.\n\n{paragraphs}\n\nI would welcome the opportunity to discuss how this verified experience may support your team.\n\nSincerely,\n{profile.name}"
+    digest=hashlib.sha256(profile.master_resume.encode()).hexdigest(); report={"before_sha256":digest,"after_sha256":hashlib.sha256(profile.master_resume.encode()).hexdigest(),"unchanged":True,"selected_fact_ids":[x["fact_id"] for x in evidence],"selected_claim_count":len(evidence)}
+    return {"tailored_resume":resume,"cover_letter":cover,"used_fact_ids":report["selected_fact_ids"],"validation":validation,"master_resume_unchanged":report["unchanged"],"change_report":report}

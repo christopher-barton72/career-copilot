@@ -11,6 +11,11 @@ class CareerFact:
     kind: str
     confidence: str = "verified"
     source: str = "master_resume"
+    section: str = ""
+    employer: str = ""
+    role: str = ""
+    start_year: int | None = None
+    end_year: int | None = None
 
 
 @dataclass
