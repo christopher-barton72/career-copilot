@@ -83,7 +83,7 @@ class Handler(SimpleHTTPRequestHandler):
                 materials=tailor(profile,result); kind=payload.get("kind","resume")
                 if kind not in {"resume","cover_letter"}: raise ValueError("Export kind must be resume or cover_letter.")
                 content=materials["tailored_resume" if kind=="resume" else "cover_letter"]
-                body=render_pdf("Tailored Resume" if kind=="resume" else "Cover Letter",content)
+                body=render_pdf("Tailored Resume" if kind=="resume" else "Cover Letter",content,kind)
                 self.send_response(200); self.send_header("Content-Type","application/pdf"); self.send_header("Content-Disposition",f'attachment; filename="{kind}.pdf"'); self.send_header("Content-Length",str(len(body))); self.send_header("Cache-Control","no-store"); self.send_header("X-Content-Type-Options","nosniff"); self.end_headers(); self.wfile.write(body)
             else:
                 self._json(404, {"error": "Not found"})
