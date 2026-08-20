@@ -46,6 +46,8 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(materials["master_resume_unchanged"])
         self.assertEqual(self.profile.master_resume, RESUME.strip())
         self.assertEqual(materials["change_report"]["before_sha256"], materials["change_report"]["after_sha256"])
+        self.assertIn("Highlights of the experience", materials["cover_letter"])
+        self.assertNotIn("One relevant example", materials["cover_letter"])
 
     def test_unknown_fact_is_rejected(self):
         self.assertFalse(validate_fact_ids(self.profile, ["fact_invented"])["valid"])
@@ -69,6 +71,15 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(pdf.startswith(b"%PDF-1.4"))
         self.assertGreaterEqual(pdf.count(b"/Type /Page"), 3)
         self.assertTrue(pdf.endswith(b"%%EOF"))
+
+    def test_pdf_hides_internal_evidence_ids(self):
+        pdf = render_pdf("Resume", "Jordan Example\nArchitect\n\nEXPERIENCE\n- Verified claim [fact_abcdef1234]", "resume")
+        self.assertNotIn(b"fact_abcdef1234", pdf)
+        self.assertIn(b"Verified claim", pdf)
+
+    def test_pdf_kind_is_validated(self):
+        with self.assertRaises(ValueError):
+            render_pdf("Document", "content", "portfolio")
 
 
 if __name__ == "__main__":
