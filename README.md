@@ -62,6 +62,14 @@ The MVP deliberately works without an external model. The architecture leaves `c
 4. Review the score, evidence, gaps, disqualifiers, and compensation labels.
 5. Generate tailored materials. The master resume is never overwritten.
 
+## Recommendation logic
+
+The analyzer separates evidence overlap from explicit eligibility and preference compatibility. It checks required, preferred, and generally mentioned skills independently; evaluates explicit degree and minimum-experience language; compares job location and work mode with saved preferences; checks employment type, travel, and compensation; and shows each assessment in the recommendation view.
+
+Explicit incompatibilities fail conservatively. A location mismatch for an on-site or hybrid role, an unacceptable employment type or work mode, compensation below the saved minimum, excessive travel, or a saved dealbreaker produces `SKIP`. One unsupported must-have caps the result at `STRETCH`; two unsupported must-haves or an unsupported required degree produce `SKIP`. Preferred qualifications are reported as gaps but are not treated as required.
+
+This remains deterministic text analysis, not a semantic hiring decision. Ambiguous locations, equivalencies such as "degree or equivalent experience," transferable skills outside the known vocabulary, and nuanced requirement wording require human review. The tool never treats an unknown as verified evidence.
+
 ## Tests
 
 ```powershell

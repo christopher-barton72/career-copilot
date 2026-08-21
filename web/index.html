@@ -15,14 +15,15 @@
         <label>Master resume<textarea name="master_resume" rows="12" required placeholder="Paste the complete master resume..."></textarea></label>
         <div class="grid"><label>Target roles<input name="target_roles" placeholder="Security Architect, Principal Engineer"></label><label>Skills to prioritize<input name="target_skills" placeholder="Zero Trust, Azure, NIST"></label></div>
         <div class="grid three"><label>Work modes<input name="work_modes" placeholder="remote, hybrid"></label><label>Minimum salary<input name="minimum_salary" type="number" placeholder="150000"></label><label>Target salary<input name="target_salary" type="number" placeholder="180000"></label></div>
-        <div class="grid"><label>Location<input name="location" placeholder="Raleigh, NC"></label><label>Maximum travel %<input name="travel_max_percent" type="number" min="0" max="100"></label></div>
+        <div class="grid"><label>Home location<input name="location" placeholder="Raleigh, NC"></label><label>Maximum travel %<input name="travel_max_percent" type="number" min="0" max="100"></label></div>
+        <label>Acceptable employment types<input name="employment_types" placeholder="full-time, contract"></label>
         <label>Dealbreakers<input name="dealbreakers" placeholder="commission only, relocation required"></label>
         <button type="submit" class="primary">Save verified profile</button><span class="message" id="profile-message"></span>
       </form>
     </section>
     <section id="job" class="panel">
       <div class="section-head"><div><h2>Analyze a real opportunity</h2><p>Paste the full posting for the most reliable evidence mapping. A URL is recorded for reference; this MVP does not fetch it.</p></div></div>
-      <form id="job-form"><div class="grid"><label>Job title<input name="title" required></label><label>Company<input name="company"></label></div><label>Source URL<input name="source_url" type="url" placeholder="https://..."></label><label>Full job description<textarea name="description" rows="16" required></textarea></label><button type="submit" class="primary">Analyze fit</button><span class="message" id="job-message"></span></form>
+      <form id="job-form"><div class="grid"><label>Job title<input name="title" required></label><label>Company<input name="company"></label></div><div class="grid"><label>Job location<input name="location" placeholder="New York, NY or Remote"></label><label>Source URL<input name="source_url" type="url" placeholder="https://..."></label></div><label>Full job description<textarea name="description" rows="16" required></textarea></label><button type="submit" class="primary">Analyze fit</button><span class="message" id="job-message"></span></form>
     </section>
     <section id="results" class="panel"><div id="empty"><h2>No analysis yet</h2><p>Save a profile and analyze a job to see the headhunter recommendation.</p></div><div id="analysis" hidden></div></section>
   </main><footer>Career Copilot prepares and advises. It cannot submit applications or contact employers.</footer><script src="/app.js"></script>

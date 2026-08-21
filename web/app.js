@@ -22,7 +22,7 @@ function fillProfile(profile) {
   if (!profile) return;
   const form = $('#profile-form');
   for (const key of ['name', 'headline', 'master_resume']) form.elements[key].value = profile[key] || '';
-  for (const key of ['target_roles', 'target_skills', 'work_modes', 'dealbreakers']) form.elements[key].value = (profile.preferences[key] || []).join(', ');
+  for (const key of ['target_roles', 'target_skills', 'work_modes', 'employment_types', 'dealbreakers']) form.elements[key].value = (profile.preferences[key] || []).join(', ');
   for (const key of ['location', 'minimum_salary', 'target_salary', 'travel_max_percent']) form.elements[key].value = profile.preferences[key] ?? '';
   $('#fact-count').textContent = `${profile.facts.length} verified facts`;
 }
@@ -35,7 +35,7 @@ $('#profile-form').onsubmit = async event => {
     const values = Object.fromEntries(new FormData(form));
     const payload = {name: values.name, headline: values.headline, master_resume: values.master_resume, preferences: {
       target_roles: list(values.target_roles), target_skills: list(values.target_skills), work_modes: list(values.work_modes),
-      dealbreakers: list(values.dealbreakers), location: values.location, minimum_salary: number(values.minimum_salary),
+      employment_types: list(values.employment_types), dealbreakers: list(values.dealbreakers), location: values.location, minimum_salary: number(values.minimum_salary),
       target_salary: number(values.target_salary), travel_max_percent: number(values.travel_max_percent)
     }};
     const data = await api('/api/profile', {method: 'POST', body: JSON.stringify(payload)});
@@ -66,6 +66,12 @@ function render(analysis) {
   const compensation = analysis.compensation.employer_posted || analysis.compensation.market_estimate;
   const pay = compensation ? `<div class="pay"><strong>$${compensation.minimum.toLocaleString()} - $${compensation.maximum.toLocaleString()}</strong><span>${esc(compensation.source.replaceAll('_', ' '))} · ${esc(compensation.confidence)} confidence</span><p>${esc(compensation.note)}</p></div>` : '<p class="empty-state">No posted compensation or candidate target was available. No estimate was made.</p>';
   const matched = analysis.matched_skills.length ? analysis.matched_skills.map(skill => `<span class="tag">${esc(skill)}</span>`).join('') : '<span class="empty-state">None detected</span>';
+  const requirementItems = analysis.requirements ? [
+    ...analysis.requirements.required_skills.map(skill => ({label: skill, met: analysis.requirements.matched_required_skills.includes(skill)})),
+    ...(analysis.requirements.minimum_years ? [{label: `${analysis.requirements.minimum_years}+ years experience`, met: analysis.requirements.supported_years >= analysis.requirements.minimum_years}] : []),
+    ...(analysis.requirements.degree_required ? [{label: 'Required degree', met: analysis.requirements.degree_supported}] : [])
+  ] : [];
+  const requirements = requirementItems.length ? requirementItems.map(item => `<li class="requirement ${item.met ? 'met' : 'unmet'}"><span>${item.met ? 'Met' : 'Not verified'}</span>${esc(item.label)}</li>`).join('') : '<li class="empty-item">No explicit must-have requirements were detected.</li>';
   const recommendationClass = analysis.recommendation.toLowerCase().replaceAll(' ', '-');
 
   $('#analysis').hidden = false;
@@ -77,6 +83,7 @@ function render(analysis) {
     <section aria-labelledby="score-heading"><div class="content-heading"><div><span class="kicker">Fit breakdown</span><h3 id="score-heading">How this recommendation was calculated</h3></div></div><div class="breakdown">${scores}</div></section>
     <div class="results-grid">
       <main class="results-main">
+        <section class="card"><div class="card-heading"><div><span class="kicker">Must-have check</span><h3>Explicit requirements</h3></div><span class="count-badge">${requirementItems.length}</span></div><ul class="requirement-list">${requirements}</ul></section>
         <section class="card"><div class="card-heading"><div><span class="kicker">Source-grounded</span><h3>Verified evidence</h3></div><span class="count-badge">${analysis.evidence.length}</span></div>${evidence}</section>
         <section class="card"><span class="kicker">Direct overlap</span><h3>Matched skills</h3><div class="tags">${matched}</div></section>
       </main>
