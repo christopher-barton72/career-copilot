@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
@@ -84,7 +85,9 @@ def _ollama_transport(payload: dict[str, Any], base_url: str) -> dict[str, Any]:
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         raise AIError(f"Ollama request failed with HTTP {exc.code}.") from exc
-    except (URLError, TimeoutError) as exc:
+    except TimeoutError as exc:
+        raise AIError("Ollama took too long to review the documents. Try again or select a faster local model.") from exc
+    except URLError as exc:
         raise AIError("Ollama is not reachable. Start Ollama and confirm the selected model is installed.") from exc
 
 
@@ -99,7 +102,7 @@ def _request_json(
     if not config.ready:
         raise AIError("AI is not configured.")
     if config.provider == "ollama":
-        payload = {"model": config.model, "stream": False, "format": schema, "options": {"temperature": 0, "num_ctx": 16384}, "messages": [{"role": "system", "content": instructions}, {"role": "user", "content": json.dumps(input_data, ensure_ascii=False)}]}
+        payload = {"model": config.model, "stream": False, "format": schema, "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 1200}, "messages": [{"role": "system", "content": instructions}, {"role": "user", "content": json.dumps(input_data, ensure_ascii=False)}]}
         response = (transport or _ollama_transport)(payload, config.base_url)
         output_text = response.get("message", {}).get("content")
     else:
@@ -188,14 +191,21 @@ def review_materials(profile: CareerProfile, analysis: dict[str, Any], materials
         "required": ["passed", "unsupported_claims", "professionalism_score", "review_notes"],
         "properties": {
             "passed": {"type": "boolean"},
-            "unsupported_claims": {"type": "array", "items": {"type": "string"}},
+            "unsupported_claims": {"type": "array", "maxItems": 10, "items": {"type": "string", "maxLength": 300}},
             "professionalism_score": {"type": "integer", "minimum": 0, "maximum": 100},
-            "review_notes": {"type": "array", "items": {"type": "string"}},
+            "review_notes": {"type": "array", "maxItems": 10, "items": {"type": "string", "maxLength": 300}},
         },
     }
+    cited_ids = set()
+    for text in materials.values():
+        cited_ids.update(re.findall(r"\[(fact_[a-f0-9]+)\]", text))
+    listed_skills = analysis.get("matched_skills", [])
+    def supports_listed_skill(text: str) -> bool:
+        return any(re.search(rf"(?<![a-z0-9]){re.escape(skill)}(?![a-z0-9])", text, re.I) for skill in listed_skills)
+    review_facts = [{"fact_id": fact.id, "text": fact.text} for fact in profile.facts if fact.id in cited_ids or supports_listed_skill(fact.text)]
     return _request_json(
         "application_material_review",
-        "Act as a meticulous senior headhunter and factual reviewer. Compare every candidate claim with the verified facts. Fail the review if anything is invented, embellished, materially paraphrased beyond the evidence, or misleading. Also assess professional quality and job relevance.",
-        {"job": analysis["job"], "verified_facts": _facts(profile), "materials": materials},
+        "Act as a meticulous senior headhunter and factual reviewer. Compare every candidate claim with the verified facts. Fail if anything is invented, embellished, materially paraphrased beyond the evidence, or misleading. Exact text copied from a verified fact is supported. Job titles, company names, and neutral application language are not candidate claims. Keep every unsupported-claim excerpt and review note under 200 characters; never repeat a whole document.",
+        {"job": {key: analysis["job"].get(key, "") for key in ("title", "company")}, "verified_facts": review_facts, "materials": materials},
         schema, config, transport,
     )

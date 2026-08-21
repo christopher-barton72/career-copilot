@@ -48,7 +48,7 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(materials["master_resume_unchanged"])
         self.assertEqual(self.profile.master_resume, RESUME.strip())
         self.assertEqual(materials["change_report"]["before_sha256"], materials["change_report"]["after_sha256"])
-        self.assertIn("Highlights of the experience", materials["cover_letter"])
+        self.assertIn("Selected verified experience", materials["cover_letter"])
         self.assertNotIn("One relevant example", materials["cover_letter"])
 
     def test_unknown_fact_is_rejected(self):
@@ -161,7 +161,8 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(endpoint, "http://127.0.0.1:11434/api/chat")
             self.assertFalse(payload["stream"])
             self.assertEqual(payload["options"]["temperature"], 0)
-            self.assertEqual(payload["options"]["num_ctx"], 16384)
+            self.assertEqual(payload["options"]["num_ctx"], 8192)
+            self.assertEqual(payload["options"]["num_predict"], 1200)
             self.assertEqual(payload["format"]["type"], "object")
             value = {"confidence_score": 82, "recommendation": "APPLY", "rationale": "Relevant verified evidence.", "strengths": [{"fact_id": fact_id, "reason": "Relevant."}], "concerns": [], "interview_questions": []}
             return {"message": {"content": __import__("json").dumps(value)}}
@@ -223,6 +224,39 @@ class CoreTests(unittest.TestCase):
             return {"output_text": __import__("json").dumps(value)}
         with self.assertRaises(ValueError):
             tailor(self.profile, analysis, AIConfig(True, "test-model", "secret"), transport)
+
+    def test_ai_review_rejection_falls_back_to_conservative_draft(self):
+        analysis = analyze(self.profile, {"title": "Architect", "company": "Acme", "description": JOB})
+        fact_id = analysis["evidence"][0]["fact_id"]
+        reviews = 0
+        def transport(payload, _key):
+            nonlocal reviews
+            name = payload["text"]["format"]["name"]
+            if name == "application_material_plan":
+                value = {"selected_fact_ids": [fact_id], "resume_summary": {"text": "Possibly embellished summary.", "fact_ids": [fact_id]}, "cover_letter_opening": {"text": "Opening", "fact_ids": [fact_id]}}
+            else:
+                reviews += 1
+                value = {"passed": reviews == 2, "unsupported_claims": [] if reviews == 2 else ["Possibly embellished summary."], "professionalism_score": 82, "review_notes": []}
+            return {"output_text": __import__("json").dumps(value)}
+        materials = tailor(self.profile, analysis, AIConfig(True, "test-model", "secret"), transport)
+        self.assertTrue(materials["ai_revision_applied"])
+        self.assertTrue(materials["ai_review"]["passed"])
+        self.assertIn("Evidence-selected application for Architect at Acme.", materials["tailored_resume"])
+        self.assertNotIn("Possibly embellished", materials["tailored_resume"])
+
+    def test_ai_review_sends_only_facts_cited_by_the_draft(self):
+        from career_copilot.ai import review_materials
+        analysis = analyze(self.profile, {"title": "Architect", "description": JOB})
+        analysis["matched_skills"] = []
+        cited = self.profile.facts[0]
+        def transport(payload, _key):
+            supplied = __import__("json").loads(payload["input"])["verified_facts"]
+            self.assertEqual(supplied, [{"fact_id": cited.id, "text": cited.text}])
+            value = {"passed": True, "unsupported_claims": [], "professionalism_score": 90, "review_notes": []}
+            return {"output_text": __import__("json").dumps(value)}
+        materials = {"tailored_resume": f"- {cited.text} [{cited.id}]", "cover_letter": "Thank you."}
+        result = review_materials(self.profile, analysis, materials, AIConfig(True, "test-model", "secret"), transport)
+        self.assertTrue(result["passed"])
 
 
 if __name__ == "__main__":

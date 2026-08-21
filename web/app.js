@@ -104,7 +104,7 @@ async function generate() {
   const button = $('#tailor'); button.disabled = true; button.textContent = 'Generating...';
   try {
     const data = await api('/api/tailor', {method: 'POST', body: '{}'}), materials = data.materials;
-    const review = materials.ai_review ? ` AI review: ${materials.ai_review.professionalism_score}/100 professionalism, factual review passed.` : ' Local evidence validation passed.';
+    const review = materials.ai_review ? ` AI review: ${materials.ai_review.professionalism_score}/100 professionalism, factual review passed.${materials.ai_revision_applied ? ' A conservative evidence-only revision was applied automatically.' : ''}` : ' Local evidence validation passed.';
     $('#material-output').innerHTML = `<section class="materials-section"><div class="content-heading"><div><span class="kicker">Evidence validated</span><h3>Your application materials</h3><p>${materials.validation.checked_fact_count} claims checked. Master resume SHA-256 unchanged.${review}</p></div></div><div class="document-grid"><article class="document-card"><div class="document-title"><h3>Tailored resume</h3><button class="primary export" data-kind="resume">Download PDF</button></div><div class="materials">${esc(materials.tailored_resume)}</div></article><article class="document-card"><div class="document-title"><h3>Cover letter</h3><button class="primary export" data-kind="cover_letter">Download PDF</button></div><div class="materials">${esc(materials.cover_letter)}</div></article></div></section>`;
     $$('.export').forEach(exportButton => exportButton.onclick = () => downloadPdf(exportButton.dataset.kind));
   } catch (error) { alert(error.message); }
