@@ -15,6 +15,19 @@ A private, local-first career assistant that behaves like a skeptical senior hea
 - Never applies to a job or contacts employers
 - Optionally adds an AI senior-headhunter assessment, evidence selection, and independent draft review
 
+## AI-assisted career review
+
+Career Copilot uses AI as a controlled decision-support layer, not as a source of new career claims:
+
+- **Senior-headhunter review:** AI evaluates the verified resume against the job posting, explains strengths and concerns, proposes interview questions, and returns a separate confidence score for interview competitiveness.
+- **Evidence-ranked tailoring:** AI identifies and orders the master-resume facts that make the most natural case for the role. Those selections drive the resume highlights, relevant expertise, experience emphasis, and longer cover letter.
+- **Independent draft review:** A second AI pass checks factual support and professionalism before materials are released.
+- **Deterministic guardrails:** Eligibility blockers, location and work-mode conflicts, required qualifications, and recommendation caps remain controlled by deterministic logic. AI cannot override a deterministic `SKIP` or `STRETCH` decision.
+- **No invented experience:** Applicant-facing claims are built from exact verified facts plus neutral connective language. Unknown fact IDs, altered source claims, and unsupported content fail closed.
+- **Private local option:** Ollama and `llama3.2` can run the complete AI workflow locally over loopback HTTP, with no API key and no resume data leaving the computer. OpenAI remains an optional cloud provider.
+
+The master resume is hashed before and after tailoring and must remain unchanged. AI selects presentation and emphasis; it does not rewrite career history.
+
 ## Run locally
 
 Requires Python 3.10 or newer. No package installation is needed.
@@ -115,11 +128,11 @@ python -m unittest discover -s tests -v
 - `career_copilot/models.py` — structured domain objects
 - `career_copilot/profile.py` — fact extraction and career-truth creation
 - `career_copilot/analyzer.py` — explainable deterministic scoring
-- `career_copilot/ai.py` — opt-in Responses API boundary and strict structured outputs
+- `career_copilot/ai.py` — opt-in Ollama/OpenAI boundary, senior-headhunter assessment, evidence planning, and strict structured review
 - `career_copilot/tailor.py` — evidence-bound drafting
 - `career_copilot/validator.py` — anti-hallucination checks
 - `career_copilot/storage.py` — atomic local persistence
 - `career_copilot/server.py` — JSON API and local UI server
 - `web/` — dependency-free interface
 
-The next sensible increments are interview-prep packets, a job/application tracker, URL fetching with explicit user review, and an LLM adapter that must return schema-valid JSON with fact citations.
+The next sensible increments are interview-prep packets, a job/application tracker, and URL fetching with explicit user review.
