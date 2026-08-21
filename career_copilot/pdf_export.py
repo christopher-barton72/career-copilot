@@ -68,8 +68,10 @@ def _blocks(title: str, content: str, kind: str) -> list[dict]:
             if line.isupper() and len(line) < 70:
                 pending = line.replace(" (REVERSE CHRONOLOGICAL)", "")
                 blocks.append({"type": "section", "text": pending}); continue
+            if line.startswith("EMPLOYER: "): blocks.append({"type": "employer", "text": line[10:]}); continue
+            if line.startswith("ROLE: "): blocks.append({"type": "role", "text": line[6:]}); continue
             if line.startswith("- "): blocks.append({"type": "bullet", "text": line[2:]}); continue
-            block_type = {"PROFESSIONAL SUMMARY": "profile", "TARGET": "target", "RELEVANT SKILLS": "skillbox"}.get(pending, "body")
+            block_type = {"PROFESSIONAL PROFILE": "profile", "CORE EXPERTISE": "skillbox"}.get(pending, "body")
             blocks.append({"type": block_type, "text": line}); pending = ""
     else:
         signature_name = next((line for line in reversed(lines) if line and not line.startswith("CONTACT:")), title)
@@ -120,16 +122,17 @@ def render_pdf(title: str, content: str, kind: str = "resume") -> bytes:
             ensure(38); _line(commands, LEFT + 16, y + 10, PAGE_WIDTH - RIGHT - 16, NAVY, 0.9)
             _text(commands, LEFT, y - 7, value.upper(), 12, True, color=NAVY, center=True)
             _line(commands, LEFT + 16, y - 16, PAGE_WIDTH - RIGHT - 16); y -= 38
-        elif block_type == "target":
-            wrapped = _wrap(value, 10, body_width - 28, True); height = len(wrapped) * 13 + 14; ensure(height + 4)
-            _rect(commands, LEFT, y - height + 7, body_width, height)
-            for index, line in enumerate(wrapped): _text(commands, LEFT + 14, y - 5 - index * 13, line, 10, True, color=NAVY, center=True)
-            y -= height + 5
         elif block_type == "skillbox":
             wrapped = _wrap(value, 9.4, body_width - 24); height = len(wrapped) * 12 + 14; ensure(height + 4)
             _rect(commands, LEFT, y - height + 7, body_width, height)
             for index, line in enumerate(wrapped): _text(commands, LEFT + 12, y - 4 - index * 12, line, 9.4)
             y -= height + 5
+        elif block_type == "employer":
+            ensure(31); _text(commands, LEFT, y, value, 10.5, True, color=NAVY); y -= 14
+        elif block_type == "role":
+            wrapped = _wrap(value, 9.3, body_width, True); ensure(len(wrapped) * 11 + 7)
+            for index, line in enumerate(wrapped): _text(commands, LEFT, y - index * 11, line, 9.3, True, color=MUTED)
+            y -= len(wrapped) * 11 + 7
         elif block_type == "bullet":
             wrapped = _wrap(value, 9.4, body_width - 20); ensure(len(wrapped) * 12 + 5)
             _text(commands, LEFT + 4, y, "-", 10, True, color=NAVY)

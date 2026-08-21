@@ -48,8 +48,9 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(materials["master_resume_unchanged"])
         self.assertEqual(self.profile.master_resume, RESUME.strip())
         self.assertEqual(materials["change_report"]["before_sha256"], materials["change_report"]["after_sha256"])
-        self.assertIn("Selected verified experience", materials["cover_letter"])
+        self.assertIn("That foundation is reinforced", materials["cover_letter"])
         self.assertNotIn("One relevant example", materials["cover_letter"])
+        self.assertNotIn("\nTARGET\n", materials["tailored_resume"])
 
     def test_unknown_fact_is_rejected(self):
         self.assertFalse(validate_fact_ids(self.profile, ["fact_invented"])["valid"])
@@ -119,6 +120,22 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(claim.start_year, 2022)
         self.assertIn("regulated enterprise environments", claim.text)
 
+    def test_new_employer_and_non_experience_sections_clear_stale_role_metadata(self):
+        profile = build_profile({"master_resume": """Alex Example
+PROFESSIONAL EXPERIENCE
+First Corp
+Architect | 2022 - Present
+- Led secure platform delivery.
+Second Corp
+- Managed customer requirements.
+EDUCATION
+Coursework completed through Example University."""})
+        second = next(f for f in profile.facts if "customer requirements" in f.text)
+        education = next(f for f in profile.facts if "Coursework" in f.text)
+        self.assertEqual(second.employer, "Second Corp")
+        self.assertEqual(second.role, "")
+        self.assertEqual(education.employer, "")
+
     def test_claim_text_cannot_be_embellished_under_valid_id(self):
         fact = self.profile.facts[0]
         result = validate_claims(self.profile, [{"fact_id": fact.id, "text": fact.text + " and doubled revenue"}])
@@ -136,9 +153,26 @@ class CoreTests(unittest.TestCase):
         self.assertIn(b"Verified claim", pdf)
 
     def test_pdf_uses_professional_branding_without_internal_footer(self):
-        pdf = render_pdf("Resume", "Jordan Example\nArchitect\nCONTACT: jordan@example.com | 555-555-5555\n\nPROFESSIONAL SUMMARY\nVerified summary\n\nTARGET\nArchitect at Acme", "resume")
+        pdf = render_pdf("Resume", "Jordan Example\nArchitect\nCONTACT: jordan@example.com | 555-555-5555\n\nPROFESSIONAL PROFILE\nVerified summary\n\nCORE EXPERTISE\nArchitecture | Security", "resume")
         self.assertIn(b"0.08 0.31 0.49 rg", pdf)
         self.assertNotIn(b"Career Copilot - evidence-validated draft", pdf)
+
+    def test_resume_uses_real_employer_chronology_without_target_company(self):
+        profile = build_profile({"name": "Jordan Example", "headline": "Architect", "master_resume": """Jordan Example
+Architect
+PROFESSIONAL EXPERIENCE
+Actual Employer
+Principal Architect | 2022 - Present
+- Led secure platform modernization for regulated environments.
+Earlier Employer
+Engineer | 2018 - 2021
+- Managed Linux infrastructure for critical systems.""", "preferences": {}})
+        analysis = analyze(profile, {"title": "Platform Architect", "company": "Prospective Company", "description": "Seeking architecture and Linux experience for secure enterprise platforms. The role works across infrastructure teams and requires reliable technology delivery."})
+        materials = tailor(profile, analysis)
+        self.assertNotIn("Prospective Company", materials["tailored_resume"])
+        self.assertNotIn("Platform Architect", materials["tailored_resume"])
+        self.assertIn("EMPLOYER: Actual Employer", materials["tailored_resume"])
+        self.assertLess(materials["tailored_resume"].index("Actual Employer"), materials["tailored_resume"].index("Earlier Employer"))
 
     def test_pdf_kind_is_validated(self):
         with self.assertRaises(ValueError):
@@ -167,7 +201,7 @@ class CoreTests(unittest.TestCase):
             self.assertFalse(payload["stream"])
             self.assertEqual(payload["options"]["temperature"], 0)
             self.assertEqual(payload["options"]["num_ctx"], 8192)
-            self.assertEqual(payload["options"]["num_predict"], 1200)
+            self.assertEqual(payload["options"]["num_predict"], 2400)
             self.assertEqual(payload["format"]["type"], "object")
             value = {"confidence_score": 82, "recommendation": "APPLY", "rationale": "Relevant verified evidence.", "strengths": [{"fact_id": fact_id, "reason": "Relevant."}], "concerns": [], "interview_questions": []}
             return {"message": {"content": __import__("json").dumps(value)}}
@@ -214,8 +248,9 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(calls, ["application_material_plan", "application_material_review"])
         self.assertTrue(materials["ai_generated"])
         self.assertTrue(materials["ai_review"]["passed"])
-        self.assertIn("Evidence-led architecture leader.", materials["tailored_resume"])
-        self.assertIn("My verified experience aligns", materials["cover_letter"])
+        self.assertEqual(materials["ai_plan"]["resume_summary"]["text"], "Evidence-led architecture leader.")
+        self.assertNotIn("Evidence-led architecture leader.", materials["tailored_resume"])
+        self.assertIn("I am writing to express interest", materials["cover_letter"])
 
     def test_ai_review_failure_blocks_materials(self):
         analysis = analyze(self.profile, {"title": "Architect", "description": JOB})
@@ -246,7 +281,8 @@ class CoreTests(unittest.TestCase):
         materials = tailor(self.profile, analysis, AIConfig(True, "test-model", "secret"), transport)
         self.assertTrue(materials["ai_revision_applied"])
         self.assertTrue(materials["ai_review"]["passed"])
-        self.assertIn("Evidence-selected application for Architect at Acme.", materials["tailored_resume"])
+        self.assertIn("PROFESSIONAL PROFILE", materials["tailored_resume"])
+        self.assertNotIn("Acme", materials["tailored_resume"])
         self.assertNotIn("Possibly embellished", materials["tailored_resume"])
 
     def test_ai_review_sends_only_facts_cited_by_the_draft(self):

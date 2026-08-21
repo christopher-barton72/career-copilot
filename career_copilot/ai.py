@@ -102,7 +102,7 @@ def _request_json(
     if not config.ready:
         raise AIError("AI is not configured.")
     if config.provider == "ollama":
-        payload = {"model": config.model, "stream": False, "format": schema, "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 1200}, "messages": [{"role": "system", "content": instructions}, {"role": "user", "content": json.dumps(input_data, ensure_ascii=False)}]}
+        payload = {"model": config.model, "stream": False, "format": schema, "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 2400}, "messages": [{"role": "system", "content": instructions}, {"role": "user", "content": json.dumps(input_data, ensure_ascii=False)}]}
         response = (transport or _ollama_transport)(payload, config.base_url)
         output_text = response.get("message", {}).get("content")
     else:
@@ -164,24 +164,32 @@ def assess_fit(profile: CareerProfile, analysis: dict[str, Any], config: AIConfi
 def plan_materials(profile: CareerProfile, analysis: dict[str, Any], config: AIConfig, transport: Transport | None = None) -> dict[str, Any]:
     schema = {
         "type": "object", "additionalProperties": False,
-        "required": ["selected_fact_ids", "resume_summary", "cover_letter_opening"],
+        "required": ["selected_fact_ids", "resume_summary", "cover_letter_opening", "expertise", "career_highlight_ids", "cover_letter_paragraphs"],
         "properties": {
-            "selected_fact_ids": {"type": "array", "minItems": 1, "maxItems": 10, "items": {"type": "string"}},
+            "selected_fact_ids": {"type": "array", "minItems": 1, "maxItems": 18, "items": {"type": "string"}},
             "resume_summary": {"type": "object", "additionalProperties": False, "required": ["text", "fact_ids"], "properties": {"text": {"type": "string"}, "fact_ids": {"type": "array", "items": {"type": "string"}}}},
             "cover_letter_opening": {"type": "object", "additionalProperties": False, "required": ["text", "fact_ids"], "properties": {"text": {"type": "string"}, "fact_ids": {"type": "array", "items": {"type": "string"}}}},
+            "expertise": {"type": "array", "minItems": 3, "maxItems": 12, "items": {"type": "object", "additionalProperties": False, "required": ["label", "fact_ids"], "properties": {"label": {"type": "string"}, "fact_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}}}}},
+            "career_highlight_ids": {"type": "array", "minItems": 2, "maxItems": 4, "items": {"type": "string"}},
+            "cover_letter_paragraphs": {"type": "array", "minItems": 3, "maxItems": 5, "items": {"type": "object", "additionalProperties": False, "required": ["text", "fact_ids"], "properties": {"text": {"type": "string"}, "fact_ids": {"type": "array", "items": {"type": "string"}}}}},
         },
     }
     result = _request_json(
         "application_material_plan",
-        "Act as a senior headhunter creating a concise, professional, ATS-friendly application. Select and order only fact_ids that best support this job. Draft a two-sentence resume summary and a short cover-letter opening. Every factual statement must be directly supported by the cited fact_ids. Never infer or embellish skills, scope, seniority, metrics, credentials, employers, or experience. Avoid generic superlatives.",
+        "Act as a senior executive headhunter creating a natural, professional, ATS-friendly application. Select up to 18 fact_ids that create a coherent career story for this job, favoring recent and strongly relevant evidence while retaining chronology. Draft a two-to-four sentence resume profile that never names the destination employer or calls the job a target. Create concise expertise labels only when directly supported by their cited facts. Choose two to four high-impact fact_ids as career highlights. Draft three to five substantive cover-letter paragraphs that connect the candidate's verified work to the role without copying the job posting. Every factual statement must be directly supported by the cited fact_ids. Never infer or embellish skills, scope, seniority, metrics, credentials, employers, or experience. Avoid generic superlatives and forced keyword repetition.",
         {"job": analysis["job"], "assessment": analysis.get("ai_assessment"), "verified_facts": _facts(profile)},
         schema, config, transport,
     )
     cited_ids = result["selected_fact_ids"] + result["resume_summary"]["fact_ids"] + result["cover_letter_opening"]["fact_ids"]
+    cited_ids += result.get("career_highlight_ids", [])
+    for item in result.get("expertise", []) + result.get("cover_letter_paragraphs", []):
+        cited_ids += item.get("fact_ids", [])
     validation = validate_fact_ids(profile, cited_ids)
     if not validation["valid"]:
         raise AIError("AI drafting plan selected evidence that is not in the master resume.")
     result["selected_fact_ids"] = list(dict.fromkeys(result["selected_fact_ids"]))
+    if not set(cited_ids).issubset(result["selected_fact_ids"]):
+        raise AIError("AI drafting plan cited facts that were not included in its selected evidence.")
     return result
 
 

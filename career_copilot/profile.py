@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from .models import CareerFact, CareerProfile, Preferences
 
 SKILL_TERMS = {"aws","azure","gcp","python","java","javascript","typescript","sql","kubernetes","docker","terraform","vmware","linux","windows","netapp","dell","pure","vast","nist","zero trust","s3","security","storage","architecture","leadership","agile","scrum","devops","networking"}
-SECTIONS = {"PROFESSIONAL EXPERIENCE","EXPERIENCE","EDUCATION","EDUCATION & PROFESSIONAL DEVELOPMENT","CREDENTIALS","SKILLS","EXECUTIVE EXPERTISE","BUSINESS IMPACT"}
+SECTIONS = {"PROFESSIONAL EXPERIENCE","EXPERIENCE","EDUCATION","EDUCATION & PROFESSIONAL DEVELOPMENT","CREDENTIALS","SKILLS","EXECUTIVE EXPERTISE","BUSINESS IMPACT","LEADERSHIP PHILOSOPHY"}
 DATES = re.compile(r"(?P<start>(?:19|20)\d{2})\s*[-–—]\s*(?P<end>(?:19|20)\d{2}|present)", re.I)
 
 def _fact_id(text: str) -> str:
@@ -24,11 +24,16 @@ def logical_lines(resume: str) -> list[str]:
 def extract_facts(resume: str) -> list[CareerFact]:
     facts=[]; seen=set(); section=employer=role=""; start=end=None
     for line in logical_lines(resume):
-        if line.upper() in SECTIONS: section=line.upper(); continue
+        if line.upper() in SECTIONS:
+            section=line.upper()
+            if section not in {"PROFESSIONAL EXPERIENCE", "EXPERIENCE"}:
+                employer=role=""; start=end=None
+            continue
         match=DATES.search(line)
         if match:
             role=line; start=int(match.group("start")); end=None if match.group("end").lower()=="present" else int(match.group("end"))
-        elif section in {"PROFESSIONAL EXPERIENCE","EXPERIENCE"} and len(line)<80 and not re.search(r"[.!]$",line): employer=line
+        elif section in {"PROFESSIONAL EXPERIENCE","EXPERIENCE"} and len(line)<80 and not re.search(r"[.!]$",line):
+            employer=line; role=""; start=end=None
         if len(line)<12 or len(line)>700 or line.lower() in seen: continue
         seen.add(line.lower()); key=line.lower(); kind="experience"
         if match: kind="employment"
