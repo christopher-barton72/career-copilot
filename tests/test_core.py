@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from career_copilot.analyzer import analyze, extract_salary
 from career_copilot.profile import build_profile
@@ -6,6 +7,7 @@ from career_copilot.tailor import tailor
 from career_copilot.validator import validate_fact_ids
 from career_copilot.validator import validate_claims
 from career_copilot.pdf_export import render_pdf
+from career_copilot.ai import AIConfig, AIError, assess_fit, plan_materials, status
 
 
 RESUME = """Jordan Example
@@ -46,8 +48,9 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(materials["master_resume_unchanged"])
         self.assertEqual(self.profile.master_resume, RESUME.strip())
         self.assertEqual(materials["change_report"]["before_sha256"], materials["change_report"]["after_sha256"])
-        self.assertIn("Highlights of the experience", materials["cover_letter"])
+        self.assertIn("That foundation is reinforced", materials["cover_letter"])
         self.assertNotIn("One relevant example", materials["cover_letter"])
+        self.assertNotIn("\nTARGET\n", materials["tailored_resume"])
 
     def test_unknown_fact_is_rejected(self):
         self.assertFalse(validate_fact_ids(self.profile, ["fact_invented"])["valid"])
@@ -117,6 +120,22 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(claim.start_year, 2022)
         self.assertIn("regulated enterprise environments", claim.text)
 
+    def test_new_employer_and_non_experience_sections_clear_stale_role_metadata(self):
+        profile = build_profile({"master_resume": """Alex Example
+PROFESSIONAL EXPERIENCE
+First Corp
+Architect | 2022 - Present
+- Led secure platform delivery.
+Second Corp
+- Managed customer requirements.
+EDUCATION
+Coursework completed through Example University."""})
+        second = next(f for f in profile.facts if "customer requirements" in f.text)
+        education = next(f for f in profile.facts if "Coursework" in f.text)
+        self.assertEqual(second.employer, "Second Corp")
+        self.assertEqual(second.role, "")
+        self.assertEqual(education.employer, "")
+
     def test_claim_text_cannot_be_embellished_under_valid_id(self):
         fact = self.profile.facts[0]
         result = validate_claims(self.profile, [{"fact_id": fact.id, "text": fact.text + " and doubled revenue"}])
@@ -133,11 +152,166 @@ class CoreTests(unittest.TestCase):
         self.assertNotIn(b"fact_abcdef1234", pdf)
         self.assertIn(b"Verified claim", pdf)
 
+    def test_pdf_uses_professional_branding_without_internal_footer(self):
+        pdf = render_pdf("Resume", "Jordan Example\nArchitect\nCONTACT: jordan@example.com | 555-555-5555\n\nPROFESSIONAL PROFILE\nVerified summary\n\nCORE EXPERTISE\nArchitecture | Security", "resume")
+        self.assertIn(b"0.08 0.31 0.49 rg", pdf)
+        self.assertNotIn(b"Career Copilot - evidence-validated draft", pdf)
+
+    def test_resume_uses_real_employer_chronology_without_target_company(self):
+        profile = build_profile({"name": "Jordan Example", "headline": "Architect", "master_resume": """Jordan Example
+Architect
+PROFESSIONAL EXPERIENCE
+Actual Employer
+Principal Architect | 2022 - Present
+- Led secure platform modernization for regulated environments.
+Earlier Employer
+Engineer | 2018 - 2021
+- Managed Linux infrastructure for critical systems.""", "preferences": {}})
+        analysis = analyze(profile, {"title": "Platform Architect", "company": "Prospective Company", "description": "Seeking architecture and Linux experience for secure enterprise platforms. The role works across infrastructure teams and requires reliable technology delivery."})
+        materials = tailor(profile, analysis)
+        self.assertNotIn("Prospective Company", materials["tailored_resume"])
+        self.assertNotIn("Platform Architect", materials["tailored_resume"])
+        self.assertIn("EMPLOYER: Actual Employer", materials["tailored_resume"])
+        self.assertLess(materials["tailored_resume"].index("Actual Employer"), materials["tailored_resume"].index("Earlier Employer"))
+
     def test_pdf_kind_is_validated(self):
         with self.assertRaises(ValueError):
             render_pdf("Document", "content", "portfolio")
 
+    def test_ai_is_opt_in_and_reports_missing_key(self):
+        result = status(AIConfig(True, "test-model", ""))
+        self.assertTrue(result["enabled"])
+        self.assertFalse(result["ready"])
+        self.assertIsNotNone(result["configuration_error"])
+        self.assertNotIn("secret", str(result).lower())
+
+    def test_ollama_is_default_ai_provider_and_needs_no_key(self):
+        with patch.dict("os.environ", {"CAREER_COPILOT_AI": "true"}, clear=True):
+            config = AIConfig.from_env()
+        self.assertEqual(config.provider, "ollama")
+        self.assertEqual(config.model, "llama3.2")
+        self.assertTrue(config.ready)
+        self.assertEqual(config.base_url, "http://127.0.0.1:11434/api/chat")
+
+    def test_ollama_uses_local_structured_chat_request(self):
+        analysis = analyze(self.profile, {"title": "Architect", "description": JOB})
+        fact_id = self.profile.facts[0].id
+        def transport(payload, endpoint):
+            self.assertEqual(endpoint, "http://127.0.0.1:11434/api/chat")
+            self.assertFalse(payload["stream"])
+            self.assertEqual(payload["options"]["temperature"], 0)
+            self.assertEqual(payload["options"]["num_ctx"], 8192)
+            self.assertEqual(payload["options"]["num_predict"], 2400)
+            self.assertEqual(payload["format"]["type"], "object")
+            value = {"confidence_score": 82, "recommendation": "APPLY", "rationale": "Relevant verified evidence.", "strengths": [{"fact_id": fact_id, "reason": "Relevant."}], "concerns": [], "interview_questions": []}
+            return {"message": {"content": __import__("json").dumps(value)}}
+        config = AIConfig(True, "llama3.2", "", "ollama", "http://127.0.0.1:11434/api/chat")
+        result = assess_fit(self.profile, analysis, config, transport)
+        self.assertEqual(result["provider"], "Ollama (local)")
+
+    def test_remote_ollama_url_is_not_ready_for_transport(self):
+        from career_copilot.ai import _ollama_transport
+        with self.assertRaises(AIError):
+            _ollama_transport({}, "http://example.com:11434/api/chat")
+
+    def test_ai_headhunter_cannot_override_a_deterministic_skip(self):
+        analysis = analyze(self.profile, {"title": "Architect", "location": "New York, NY", "description": JOB + " This is an on-site role in New York."})
+        analysis["recommendation"] = "SKIP"
+        analysis["disqualifiers"] = ["Location mismatch"]
+        fact_id = self.profile.facts[0].id
+        def transport(payload, _key):
+            self.assertFalse(payload["store"])
+            return {"output_text": __import__("json").dumps({"confidence_score": 94, "recommendation": "PRIORITY APPLY", "rationale": "Strong evidence.", "strengths": [{"fact_id": fact_id, "reason": "Relevant."}], "concerns": [], "interview_questions": []})}
+        result = assess_fit(self.profile, analysis, AIConfig(True, "test-model", "secret"), transport)
+        self.assertEqual(result["recommendation"], "SKIP")
+        self.assertEqual(result["confidence_score"], 39)
+
+    def test_ai_plan_rejects_unknown_evidence(self):
+        analysis = analyze(self.profile, {"title": "Architect", "description": JOB})
+        def transport(_payload, _key):
+            return {"output_text": '{"selected_fact_ids":["fact_invented"],"resume_summary":{"text":"Summary","fact_ids":[]},"cover_letter_opening":{"text":"Opening","fact_ids":[]}}'}
+        with self.assertRaises(AIError):
+            plan_materials(self.profile, analysis, AIConfig(True, "test-model", "secret"), transport)
+
+    def test_ai_tailoring_runs_generation_and_independent_review(self):
+        analysis = analyze(self.profile, {"title": "Architect", "description": JOB})
+        fact_id = analysis["evidence"][0]["fact_id"]
+        calls = []
+        def transport(payload, _key):
+            name = payload["text"]["format"]["name"]; calls.append(name)
+            if name == "application_material_plan":
+                value = {"selected_fact_ids": [fact_id], "resume_summary": {"text": "Evidence-led architecture leader.", "fact_ids": [fact_id]}, "cover_letter_opening": {"text": "My verified experience aligns with this role.", "fact_ids": [fact_id]}}
+            else:
+                value = {"passed": True, "unsupported_claims": [], "professionalism_score": 91, "review_notes": []}
+            return {"output_text": __import__("json").dumps(value)}
+        materials = tailor(self.profile, analysis, AIConfig(True, "test-model", "secret"), transport)
+        self.assertEqual(calls, ["application_material_plan", "application_material_review"])
+        self.assertTrue(materials["ai_generated"])
+        self.assertTrue(materials["ai_review"]["passed"])
+        self.assertEqual(materials["ai_plan"]["resume_summary"]["text"], "Evidence-led architecture leader.")
+        self.assertNotIn("Evidence-led architecture leader.", materials["tailored_resume"])
+        self.assertIn("I am writing to express interest", materials["cover_letter"])
+
+    def test_ai_review_failure_blocks_materials(self):
+        analysis = analyze(self.profile, {"title": "Architect", "description": JOB})
+        fact_id = analysis["evidence"][0]["fact_id"]
+        def transport(payload, _key):
+            name = payload["text"]["format"]["name"]
+            if name == "application_material_plan":
+                value = {"selected_fact_ids": [fact_id], "resume_summary": {"text": "Summary", "fact_ids": [fact_id]}, "cover_letter_opening": {"text": "Opening", "fact_ids": [fact_id]}}
+            else:
+                value = {"passed": False, "unsupported_claims": ["Unsupported claim"], "professionalism_score": 40, "review_notes": ["Remove it"]}
+            return {"output_text": __import__("json").dumps(value)}
+        with self.assertRaises(ValueError):
+            tailor(self.profile, analysis, AIConfig(True, "test-model", "secret"), transport)
+
+    def test_ai_review_rejection_falls_back_to_conservative_draft(self):
+        analysis = analyze(self.profile, {"title": "Architect", "company": "Acme", "description": JOB})
+        fact_id = analysis["evidence"][0]["fact_id"]
+        reviews = 0
+        def transport(payload, _key):
+            nonlocal reviews
+            name = payload["text"]["format"]["name"]
+            if name == "application_material_plan":
+                value = {"selected_fact_ids": [fact_id], "resume_summary": {"text": "Possibly embellished summary.", "fact_ids": [fact_id]}, "cover_letter_opening": {"text": "Opening", "fact_ids": [fact_id]}}
+            else:
+                reviews += 1
+                value = {"passed": reviews == 2, "unsupported_claims": [] if reviews == 2 else ["Possibly embellished summary."], "professionalism_score": 82, "review_notes": []}
+            return {"output_text": __import__("json").dumps(value)}
+        materials = tailor(self.profile, analysis, AIConfig(True, "test-model", "secret"), transport)
+        self.assertTrue(materials["ai_revision_applied"])
+        self.assertTrue(materials["ai_review"]["passed"])
+        self.assertIn("PROFESSIONAL PROFILE", materials["tailored_resume"])
+        self.assertNotIn("Acme", materials["tailored_resume"])
+        self.assertNotIn("Possibly embellished", materials["tailored_resume"])
+
+    def test_ai_review_sends_only_facts_cited_by_the_draft(self):
+        from career_copilot.ai import review_materials
+        analysis = analyze(self.profile, {"title": "Architect", "description": JOB})
+        analysis["matched_skills"] = []
+        cited = self.profile.facts[0]
+        def transport(payload, _key):
+            supplied = __import__("json").loads(payload["input"])["verified_facts"]
+            self.assertEqual(supplied, [{"fact_id": cited.id, "text": cited.text}])
+            value = {"passed": True, "unsupported_claims": [], "professionalism_score": 90, "review_notes": []}
+            return {"output_text": __import__("json").dumps(value)}
+        materials = {"tailored_resume": f"- {cited.text} [{cited.id}]", "cover_letter": "Thank you."}
+        result = review_materials(self.profile, analysis, materials, AIConfig(True, "test-model", "secret"), transport)
+        self.assertTrue(result["passed"])
+
+    def test_ai_review_reconciles_exact_fact_false_positive(self):
+        from career_copilot.ai import review_materials
+        analysis = analyze(self.profile, {"title": "Architect", "description": JOB}); analysis["matched_skills"] = []
+        cited = self.profile.facts[0]
+        def transport(_payload, _key):
+            value = {"passed": False, "unsupported_claims": [cited.text], "professionalism_score": 88, "review_notes": []}
+            return {"output_text": __import__("json").dumps(value)}
+        materials = {"tailored_resume": f"- {cited.text} [{cited.id}]", "cover_letter": "Thank you."}
+        result = review_materials(self.profile, analysis, materials, AIConfig(True, "test-model", "secret"), transport)
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["unsupported_claims"], [])
+        self.assertEqual(result["evidence_reconciled_claims"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
-

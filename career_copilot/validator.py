@@ -17,4 +17,3 @@ def validate_claims(profile: CareerProfile, claims: list[dict[str, str]]) -> dic
         if fid not in facts: problems.append({"fact_id":fid,"reason":"unknown_fact_id"})
         elif claim.get("text","").strip()!=facts[fid]: problems.append({"fact_id":fid,"reason":"claim_does_not_match_source"})
     return {"valid":not problems,"problems":problems,"checked_claim_count":len(claims),"checked_fact_count":len(claims),"rule":"Every generated claim must exactly match its cited master-resume fact."}
-

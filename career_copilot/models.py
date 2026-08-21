@@ -57,4 +57,3 @@ def profile_from_dict(data: dict[str, Any]) -> CareerProfile:
         updated_at=data.get("updated_at", ""),
         schema_version=data.get("schema_version", 1),
     )
-

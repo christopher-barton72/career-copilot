@@ -12,7 +12,21 @@ A private, local-first career assistant that behaves like a skeptical senior hea
 - Recommends `PRIORITY APPLY`, `APPLY`, `STRETCH`, or `SKIP`
 - Produces a tailored resume and cover letter using only verified facts
 - Runs anti-hallucination validation before showing generated materials
-- Never applies to a job or sends anything externally
+- Never applies to a job or contacts employers
+- Optionally adds an AI senior-headhunter assessment, evidence selection, and independent draft review
+
+## AI-assisted career review
+
+Career Copilot uses AI as a controlled decision-support layer, not as a source of new career claims:
+
+- **Senior-headhunter review:** AI evaluates the verified resume against the job posting, explains strengths and concerns, proposes interview questions, and returns a separate confidence score for interview competitiveness.
+- **Evidence-ranked tailoring:** AI identifies and orders the master-resume facts that make the most natural case for the role. Those selections drive the resume highlights, relevant expertise, experience emphasis, and longer cover letter.
+- **Independent draft review:** A second AI pass checks factual support and professionalism before materials are released.
+- **Deterministic guardrails:** Eligibility blockers, location and work-mode conflicts, required qualifications, and recommendation caps remain controlled by deterministic logic. AI cannot override a deterministic `SKIP` or `STRETCH` decision.
+- **No invented experience:** Applicant-facing claims are built from exact verified facts plus neutral connective language. Unknown fact IDs, altered source claims, and unsupported content fail closed.
+- **Private local option:** Ollama and `llama3.2` can run the complete AI workflow locally over loopback HTTP, with no API key and no resume data leaving the computer. OpenAI remains an optional cloud provider.
+
+The master resume is hashed before and after tailoring and must remain unchanged. AI selects presentation and emphasis; it does not rewrite career history.
 
 ## Run locally
 
@@ -42,17 +56,50 @@ python -m career_copilot
 
 ## Public-release privacy and security
 
-Career Copilot binds only to `127.0.0.1`, does not fetch URLs, contact employers, or use external AI services. Resume, job, and analysis data remain in the ignored `data/` directory. Never commit real resumes, generated PDFs, secrets, or analysis exports. The server rejects cross-origin JSON writes, limits request size, disables caching, and sets restrictive browser security headers. This is a local single-user tool; do not expose its port to a network.
+Career Copilot binds only to `127.0.0.1` and does not fetch job URLs or contact employers. By default, all analysis remains local in the ignored `data/` directory. Ollama AI processing also stays on the computer through a loopback-only HTTP connection. If the optional OpenAI provider is selected, the master resume, verified facts, job posting, and generated drafts are sent to OpenAI with response storage disabled. Never commit real resumes, generated PDFs, secrets, or analysis exports. The server rejects cross-origin JSON writes, limits request size, disables caching, and sets restrictive browser security headers. This is a local single-user tool; do not expose its port to a network.
 
 The saved master resume is immutable during analysis, tailoring, and export. Tailoring selects exact source facts, validates both evidence IDs and exact claim text, and reports SHA-256 before/after values. A mismatched claim fails closed. Generated materials are drafts and require human review.
 
 ## PDF export
 
-`POST /api/export` with JSON `{ "kind": "resume" }` or `{ "kind": "cover_letter" }` returns a dependency-free, paginated PDF. The format prioritizes readable typography, predictable margins, and reliable text extraction.
+`POST /api/export` with JSON `{ "kind": "resume" }` or `{ "kind": "cover_letter" }` returns a dependency-free, paginated PDF. Resume and cover-letter exports share a professional navy identity, centered contact header, restrained rules and shaded callouts, compact section hierarchy, protected bottom margins, and page numbering. The resume presents a natural profile, job-relevant expertise and highlights, and the candidate's actual employers in reverse chronology; it never labels the prospective employer or opening as a resume target. Internal evidence IDs and Career Copilot validation labels are never printed in applicant-facing PDFs.
 
-## Optional AI drafting
+## Optional AI headhunter and drafting review
 
-The MVP deliberately works without an external model. The architecture leaves `career_copilot/llm.py` as the integration boundary for adding an approved model provider. The current release keeps all processing local and deterministic so its evidence and safety behavior are easy to test before adding model variability.
+AI is opt-in. The deterministic analyzer remains authoritative for hard eligibility and preference blockers. When enabled, AI adds a separate senior-headhunter confidence score, ranks and selects verified evidence for the resume and cover letter, and performs a second factual/professional review before drafts are released. Candidate-facing claims are assembled from exact verified facts plus neutral connective language, so an AI-written metric or achievement cannot reach the export even if a small local model overlooks it during review. Unknown evidence IDs and any remaining unsupported claim fail closed. The master resume is never changed.
+
+### Local AI with Ollama (recommended)
+
+Install [Ollama for Windows](https://ollama.com/download/windows), then download a model:
+
+```powershell
+ollama pull llama3.2
+```
+
+Start Career Copilot from the same PowerShell window:
+
+```powershell
+$env:CAREER_COPILOT_AI = "true"
+$env:CAREER_COPILOT_AI_PROVIDER = "ollama"
+$env:CAREER_COPILOT_AI_MODEL = "llama3.2"
+& "C:\Users\1lone\AppData\Local\Programs\Python\Python313\python.exe" -m career_copilot
+```
+
+Career Copilot calls Ollama only at the loopback address `http://127.0.0.1:11434`; remote Ollama URLs are rejected so resume data cannot be redirected to another host. No OpenAI key or per-request API charge is required. Local model quality and speed depend on the selected model and computer hardware.
+
+### OpenAI API (optional cloud provider)
+
+Set the variables only in the PowerShell session used to launch the app:
+
+```powershell
+$env:CAREER_COPILOT_AI = "true"
+$env:CAREER_COPILOT_AI_PROVIDER = "openai"
+$env:OPENAI_API_KEY = "your-api-key"
+$env:CAREER_COPILOT_AI_MODEL = "gpt-5.2"  # optional
+& "C:\Users\1lone\AppData\Local\Programs\Python\Python313\python.exe" -m career_copilot
+```
+
+Do not put the API key in the repository, a profile, a job posting, or a screenshot. OpenAI API use may incur charges. Remove the variables or set `CAREER_COPILOT_AI=false` to return to deterministic-only operation.
 
 ## Workflow
 
@@ -81,11 +128,11 @@ python -m unittest discover -s tests -v
 - `career_copilot/models.py` — structured domain objects
 - `career_copilot/profile.py` — fact extraction and career-truth creation
 - `career_copilot/analyzer.py` — explainable deterministic scoring
+- `career_copilot/ai.py` — opt-in Ollama/OpenAI boundary, senior-headhunter assessment, evidence planning, and strict structured review
 - `career_copilot/tailor.py` — evidence-bound drafting
 - `career_copilot/validator.py` — anti-hallucination checks
 - `career_copilot/storage.py` — atomic local persistence
 - `career_copilot/server.py` — JSON API and local UI server
 - `web/` — dependency-free interface
 
-The next sensible increments are interview-prep packets, a job/application tracker, URL fetching with explicit user review, and an LLM adapter that must return schema-valid JSON with fact citations.
-
+The next sensible increments are interview-prep packets, a job/application tracker, and URL fetching with explicit user review.
