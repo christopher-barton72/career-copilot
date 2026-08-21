@@ -55,6 +55,62 @@ class CoreTests(unittest.TestCase):
     def test_salary_parser_does_not_call_estimate_posted(self):
         self.assertEqual(extract_salary(JOB)["source"], "employer_posted")
 
+    def test_hourly_salary_is_annualized(self):
+        salary = extract_salary("The posted pay range is $48-$82 per hour for this position.")
+        self.assertEqual(salary["minimum"], 99840)
+        self.assertEqual(salary["maximum"], 170560)
+
+    def test_decimal_hourly_salary_is_annualized_without_dropping_cents(self):
+        salary = extract_salary("Pay range: $48.26-$82.21 per hour.")
+        self.assertEqual(salary["minimum"], 100381)
+        self.assertEqual(salary["maximum"], 170997)
+
+    def test_required_and_preferred_skills_are_not_treated_equally(self):
+        job = JOB + " Python is required. Azure experience is preferred."
+        result = analyze(self.profile, {"title": "Principal Infrastructure Architect", "description": job})
+        self.assertIn("python", result["requirements"]["missing_required_skills"])
+        self.assertIn("azure", result["requirements"]["missing_preferred_skills"])
+        self.assertEqual(result["recommendation"], "STRETCH")
+
+    def test_two_unmet_required_skills_force_skip(self):
+        job = JOB + " Python and Kubernetes are required for all applicants."
+        result = analyze(self.profile, {"title": "Principal Infrastructure Architect", "description": job})
+        self.assertEqual(set(result["requirements"]["missing_required_skills"]), {"python", "kubernetes"})
+        self.assertEqual(result["recommendation"], "SKIP")
+
+    def test_onsite_location_mismatch_is_disqualifying(self):
+        profile = build_profile({"name": "Jordan", "master_resume": RESUME, "preferences": {"location": "Raleigh, NC", "work_modes": ["remote", "hybrid"]}})
+        result = analyze(profile, {"title": "Architect", "location": "New York, NY", "description": JOB + " This position is hybrid with three days each week in the New York office."})
+        self.assertFalse(result["preference_assessment"]["location_match"])
+        self.assertEqual(result["recommendation"], "SKIP")
+        self.assertTrue(any("does not match your saved location" in item for item in result["disqualifiers"]))
+
+    def test_same_state_different_city_is_not_a_location_match(self):
+        profile = build_profile({"name": "Jordan", "master_resume": RESUME, "preferences": {"location": "Raleigh, NC"}})
+        result = analyze(profile, {"title": "Architect", "location": "Charlotte, NC", "description": JOB + " This position is on-site in Charlotte."})
+        self.assertFalse(result["preference_assessment"]["location_match"])
+
+    def test_remote_role_does_not_fail_for_different_headquarters(self):
+        profile = build_profile({"name": "Jordan", "master_resume": RESUME, "preferences": {"location": "Raleigh, NC", "work_modes": ["remote"]}})
+        result = analyze(profile, {"title": "Architect", "location": "New York, NY", "description": JOB + " The company is headquartered in New York, but this role is fully remote."})
+        self.assertFalse(any("saved location" in item for item in result["disqualifiers"]))
+
+    def test_employment_type_mismatch_is_disqualifying(self):
+        profile = build_profile({"name": "Jordan", "master_resume": RESUME, "preferences": {"employment_types": ["full-time"]}})
+        result = analyze(profile, {"title": "Architect", "description": JOB + " This is a temporary contract engagement lasting six months."})
+        self.assertFalse(result["preference_assessment"]["employment_type_match"])
+        self.assertEqual(result["recommendation"], "SKIP")
+
+    def test_required_degree_without_evidence_forces_skip(self):
+        result = analyze(self.profile, {"title": "Architect", "description": JOB + " Minimum qualifications: a bachelor's degree is required."})
+        self.assertTrue(result["requirements"]["degree_required"])
+        self.assertEqual(result["recommendation"], "SKIP")
+
+    def test_java_does_not_match_javascript(self):
+        profile = build_profile({"name": "Jordan", "master_resume": RESUME + "Built JavaScript services for internal users.", "preferences": {}})
+        result = analyze(profile, {"title": "Engineer", "description": JOB + " Java is required for this engineering position."})
+        self.assertIn("java", result["requirements"]["missing_required_skills"])
+
     def test_wrapped_resume_lines_are_reassembled_with_chronology(self):
         profile = build_profile({"master_resume": """Alex Example\nProfessional Experience\nAcme Corp\nPrincipal Architect | 2022 - Present\n- Led a secure platform modernization across regulated\nenterprise environments with zero unplanned downtime.\nOlder Corp\nEngineer | 2018 - 2021\n- Managed Linux and storage operations for critical systems."""})
         claim = next(f for f in profile.facts if "zero unplanned" in f.text)
