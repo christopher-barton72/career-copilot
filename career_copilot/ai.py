@@ -1,0 +1,178 @@
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
+from typing import Any, Callable
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+from .models import CareerProfile
+from .validator import validate_fact_ids
+
+
+API_URL = "https://api.openai.com/v1/responses"
+
+
+class AIError(RuntimeError):
+    """A safe, user-facing AI integration failure."""
+
+
+@dataclass(frozen=True)
+class AIConfig:
+    enabled: bool
+    model: str
+    api_key: str
+
+    @classmethod
+    def from_env(cls) -> "AIConfig":
+        enabled = os.environ.get("CAREER_COPILOT_AI", "").lower() in {"1", "true", "yes", "on"}
+        return cls(enabled, os.environ.get("CAREER_COPILOT_AI_MODEL", "gpt-5.2"), os.environ.get("OPENAI_API_KEY", ""))
+
+    @property
+    def ready(self) -> bool:
+        return self.enabled and bool(self.api_key)
+
+
+Transport = Callable[[dict[str, Any], str], dict[str, Any]]
+
+
+def status(config: AIConfig | None = None) -> dict[str, Any]:
+    config = config or AIConfig.from_env()
+    return {
+        "enabled": config.enabled,
+        "ready": config.ready,
+        "model": config.model if config.enabled else None,
+        "privacy_notice": "When enabled, the master resume and job posting are sent to OpenAI for processing.",
+        "configuration_error": "OPENAI_API_KEY is not set." if config.enabled and not config.api_key else None,
+    }
+
+
+def _http_transport(payload: dict[str, Any], api_key: str) -> dict[str, Any]:
+    request = Request(
+        API_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=60) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise AIError(f"AI request failed with HTTP {exc.code}.") from exc
+    except (URLError, TimeoutError) as exc:
+        raise AIError("AI service could not be reached.") from exc
+
+
+def _request_json(
+    name: str,
+    instructions: str,
+    input_data: dict[str, Any],
+    schema: dict[str, Any],
+    config: AIConfig,
+    transport: Transport | None = None,
+) -> dict[str, Any]:
+    if not config.ready:
+        raise AIError("AI is not configured.")
+    payload = {
+        "model": config.model,
+        "store": False,
+        "instructions": instructions,
+        "input": json.dumps(input_data, ensure_ascii=False),
+        "text": {"format": {"type": "json_schema", "name": name, "strict": True, "schema": schema}},
+    }
+    response = (transport or _http_transport)(payload, config.api_key)
+    output_text = response.get("output_text")
+    if not output_text:
+        for item in response.get("output", []):
+            for content in item.get("content", []):
+                if content.get("type") == "output_text":
+                    output_text = content.get("text")
+                    break
+    try:
+        result = json.loads(output_text or "")
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise AIError("AI returned an unreadable structured response.") from exc
+    return result
+
+
+def _facts(profile: CareerProfile) -> list[dict[str, str]]:
+    return [{"fact_id": fact.id, "text": fact.text} for fact in profile.facts]
+
+
+def assess_fit(profile: CareerProfile, analysis: dict[str, Any], config: AIConfig, transport: Transport | None = None) -> dict[str, Any]:
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["confidence_score", "recommendation", "rationale", "strengths", "concerns", "interview_questions"],
+        "properties": {
+            "confidence_score": {"type": "integer", "minimum": 0, "maximum": 100},
+            "recommendation": {"type": "string", "enum": ["PRIORITY APPLY", "APPLY", "STRETCH", "SKIP"]},
+            "rationale": {"type": "string"},
+            "strengths": {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["fact_id", "reason"], "properties": {"fact_id": {"type": "string"}, "reason": {"type": "string"}}}},
+            "concerns": {"type": "array", "items": {"type": "string"}},
+            "interview_questions": {"type": "array", "items": {"type": "string"}},
+        },
+    }
+    result = _request_json(
+        "headhunter_fit_assessment",
+        "Act as a skeptical senior executive headhunter. Assess candidacy using only the supplied verified facts. Treat missing evidence as unknown, never infer credentials or achievements, and cite a fact_id for every strength. Return a realistic confidence score for interview competitiveness, not a probability of hiring.",
+        {"job": analysis["job"], "deterministic_assessment": {key: analysis[key] for key in ("recommendation", "overall_score", "requirements", "preference_assessment", "disqualifiers", "gaps")}, "verified_facts": _facts(profile)},
+        schema, config, transport,
+    )
+    validation = validate_fact_ids(profile, [item["fact_id"] for item in result["strengths"]])
+    if not validation["valid"]:
+        raise AIError("AI assessment cited evidence that is not in the master resume.")
+    # AI judgment may add nuance, but it cannot erase deterministic eligibility blockers.
+    if analysis["recommendation"] == "SKIP":
+        result["recommendation"] = "SKIP"
+        result["confidence_score"] = min(result["confidence_score"], 39)
+    elif analysis["recommendation"] == "STRETCH":
+        result["confidence_score"] = min(result["confidence_score"], 59)
+        if result["recommendation"] in {"PRIORITY APPLY", "APPLY"}:
+            result["recommendation"] = "STRETCH"
+    result.update({"provider": "OpenAI", "model": config.model, "evidence_validation": validation})
+    return result
+
+
+def plan_materials(profile: CareerProfile, analysis: dict[str, Any], config: AIConfig, transport: Transport | None = None) -> dict[str, Any]:
+    schema = {
+        "type": "object", "additionalProperties": False,
+        "required": ["selected_fact_ids", "resume_summary", "cover_letter_opening"],
+        "properties": {
+            "selected_fact_ids": {"type": "array", "minItems": 1, "maxItems": 10, "items": {"type": "string"}},
+            "resume_summary": {"type": "object", "additionalProperties": False, "required": ["text", "fact_ids"], "properties": {"text": {"type": "string"}, "fact_ids": {"type": "array", "items": {"type": "string"}}}},
+            "cover_letter_opening": {"type": "object", "additionalProperties": False, "required": ["text", "fact_ids"], "properties": {"text": {"type": "string"}, "fact_ids": {"type": "array", "items": {"type": "string"}}}},
+        },
+    }
+    result = _request_json(
+        "application_material_plan",
+        "Act as a senior headhunter creating a concise, professional, ATS-friendly application. Select and order only fact_ids that best support this job. Draft a two-sentence resume summary and a short cover-letter opening. Every factual statement must be directly supported by the cited fact_ids. Never infer or embellish skills, scope, seniority, metrics, credentials, employers, or experience. Avoid generic superlatives.",
+        {"job": analysis["job"], "assessment": analysis.get("ai_assessment"), "verified_facts": _facts(profile)},
+        schema, config, transport,
+    )
+    cited_ids = result["selected_fact_ids"] + result["resume_summary"]["fact_ids"] + result["cover_letter_opening"]["fact_ids"]
+    validation = validate_fact_ids(profile, cited_ids)
+    if not validation["valid"]:
+        raise AIError("AI drafting plan selected evidence that is not in the master resume.")
+    result["selected_fact_ids"] = list(dict.fromkeys(result["selected_fact_ids"]))
+    return result
+
+
+def review_materials(profile: CareerProfile, analysis: dict[str, Any], materials: dict[str, str], config: AIConfig, transport: Transport | None = None) -> dict[str, Any]:
+    schema = {
+        "type": "object", "additionalProperties": False,
+        "required": ["passed", "unsupported_claims", "professionalism_score", "review_notes"],
+        "properties": {
+            "passed": {"type": "boolean"},
+            "unsupported_claims": {"type": "array", "items": {"type": "string"}},
+            "professionalism_score": {"type": "integer", "minimum": 0, "maximum": 100},
+            "review_notes": {"type": "array", "items": {"type": "string"}},
+        },
+    }
+    return _request_json(
+        "application_material_review",
+        "Act as a meticulous senior headhunter and factual reviewer. Compare every candidate claim with the verified facts. Fail the review if anything is invented, embellished, materially paraphrased beyond the evidence, or misleading. Also assess professional quality and job relevance.",
+        {"job": analysis["job"], "verified_facts": _facts(profile), "materials": materials},
+        schema, config, transport,
+    )

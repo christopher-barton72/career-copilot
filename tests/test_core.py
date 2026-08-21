@@ -6,6 +6,7 @@ from career_copilot.tailor import tailor
 from career_copilot.validator import validate_fact_ids
 from career_copilot.validator import validate_claims
 from career_copilot.pdf_export import render_pdf
+from career_copilot.ai import AIConfig, AIError, assess_fit, plan_materials, status
 
 
 RESUME = """Jordan Example
@@ -136,6 +137,63 @@ class CoreTests(unittest.TestCase):
     def test_pdf_kind_is_validated(self):
         with self.assertRaises(ValueError):
             render_pdf("Document", "content", "portfolio")
+
+    def test_ai_is_opt_in_and_reports_missing_key(self):
+        result = status(AIConfig(True, "test-model", ""))
+        self.assertTrue(result["enabled"])
+        self.assertFalse(result["ready"])
+        self.assertIsNotNone(result["configuration_error"])
+        self.assertNotIn("secret", str(result).lower())
+
+    def test_ai_headhunter_cannot_override_a_deterministic_skip(self):
+        analysis = analyze(self.profile, {"title": "Architect", "location": "New York, NY", "description": JOB + " This is an on-site role in New York."})
+        analysis["recommendation"] = "SKIP"
+        analysis["disqualifiers"] = ["Location mismatch"]
+        fact_id = self.profile.facts[0].id
+        def transport(payload, _key):
+            self.assertFalse(payload["store"])
+            return {"output_text": __import__("json").dumps({"confidence_score": 94, "recommendation": "PRIORITY APPLY", "rationale": "Strong evidence.", "strengths": [{"fact_id": fact_id, "reason": "Relevant."}], "concerns": [], "interview_questions": []})}
+        result = assess_fit(self.profile, analysis, AIConfig(True, "test-model", "secret"), transport)
+        self.assertEqual(result["recommendation"], "SKIP")
+        self.assertEqual(result["confidence_score"], 39)
+
+    def test_ai_plan_rejects_unknown_evidence(self):
+        analysis = analyze(self.profile, {"title": "Architect", "description": JOB})
+        def transport(_payload, _key):
+            return {"output_text": '{"selected_fact_ids":["fact_invented"],"resume_summary":{"text":"Summary","fact_ids":[]},"cover_letter_opening":{"text":"Opening","fact_ids":[]}}'}
+        with self.assertRaises(AIError):
+            plan_materials(self.profile, analysis, AIConfig(True, "test-model", "secret"), transport)
+
+    def test_ai_tailoring_runs_generation_and_independent_review(self):
+        analysis = analyze(self.profile, {"title": "Architect", "description": JOB})
+        fact_id = analysis["evidence"][0]["fact_id"]
+        calls = []
+        def transport(payload, _key):
+            name = payload["text"]["format"]["name"]; calls.append(name)
+            if name == "application_material_plan":
+                value = {"selected_fact_ids": [fact_id], "resume_summary": {"text": "Evidence-led architecture leader.", "fact_ids": [fact_id]}, "cover_letter_opening": {"text": "My verified experience aligns with this role.", "fact_ids": [fact_id]}}
+            else:
+                value = {"passed": True, "unsupported_claims": [], "professionalism_score": 91, "review_notes": []}
+            return {"output_text": __import__("json").dumps(value)}
+        materials = tailor(self.profile, analysis, AIConfig(True, "test-model", "secret"), transport)
+        self.assertEqual(calls, ["application_material_plan", "application_material_review"])
+        self.assertTrue(materials["ai_generated"])
+        self.assertTrue(materials["ai_review"]["passed"])
+        self.assertIn("Evidence-led architecture leader.", materials["tailored_resume"])
+        self.assertIn("My verified experience aligns", materials["cover_letter"])
+
+    def test_ai_review_failure_blocks_materials(self):
+        analysis = analyze(self.profile, {"title": "Architect", "description": JOB})
+        fact_id = analysis["evidence"][0]["fact_id"]
+        def transport(payload, _key):
+            name = payload["text"]["format"]["name"]
+            if name == "application_material_plan":
+                value = {"selected_fact_ids": [fact_id], "resume_summary": {"text": "Summary", "fact_ids": [fact_id]}, "cover_letter_opening": {"text": "Opening", "fact_ids": [fact_id]}}
+            else:
+                value = {"passed": False, "unsupported_claims": ["Unsupported claim"], "professionalism_score": 40, "review_notes": ["Remove it"]}
+            return {"output_text": __import__("json").dumps(value)}
+        with self.assertRaises(ValueError):
+            tailor(self.profile, analysis, AIConfig(True, "test-model", "secret"), transport)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from .profile import build_profile
 from .storage import Storage
 from .tailor import tailor
 from .pdf_export import render_pdf
+from .ai import AIConfig, AIError, assess_fit, status as ai_status
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -50,7 +51,7 @@ class Handler(SimpleHTTPRequestHandler):
         elif path == "/api/analysis":
             self._json(200, {"analysis": STORE.load_analysis()})
         elif path == "/api/health":
-            self._json(200, {"status": "ok", "version": "0.1.0"})
+            self._json(200, {"status": "ok", "version": "0.2.0", "ai": ai_status()})
         else:
             super().do_GET()
 
@@ -70,24 +71,31 @@ class Handler(SimpleHTTPRequestHandler):
                 if not profile:
                     raise ValueError("Create a career profile first.")
                 result = analyze(profile, payload)
+                config = AIConfig.from_env()
+                if config.ready:
+                    try: result["ai_assessment"] = assess_fit(profile, result, config)
+                    except AIError as exc: result["ai_error"] = str(exc)
                 STORE.save_analysis(result)
                 self._json(200, {"analysis": result})
             elif path == "/api/tailor":
                 profile, result = STORE.load_profile(), STORE.load_analysis()
                 if not profile or not result:
                     raise ValueError("Save a profile and analyze a job first.")
-                self._json(200, {"materials": tailor(profile, result)})
+                materials = tailor(profile, result); STORE.save_materials(materials)
+                self._json(200, {"materials": materials})
             elif path == "/api/export":
                 profile, result = STORE.load_profile(), STORE.load_analysis()
                 if not profile or not result: raise ValueError("Save a profile and analyze a job first.")
-                materials=tailor(profile,result); kind=payload.get("kind","resume")
+                materials=STORE.load_materials()
+                if not materials: raise ValueError("Generate application materials before exporting.")
+                kind=payload.get("kind","resume")
                 if kind not in {"resume","cover_letter"}: raise ValueError("Export kind must be resume or cover_letter.")
                 content=materials["tailored_resume" if kind=="resume" else "cover_letter"]
                 body=render_pdf("Tailored Resume" if kind=="resume" else "Cover Letter",content,kind)
                 self.send_response(200); self.send_header("Content-Type","application/pdf"); self.send_header("Content-Disposition",f'attachment; filename="{kind}.pdf"'); self.send_header("Content-Length",str(len(body))); self.send_header("Cache-Control","no-store"); self.send_header("X-Content-Type-Options","nosniff"); self.end_headers(); self.wfile.write(body)
             else:
                 self._json(404, {"error": "Not found"})
-        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        except (ValueError, TypeError, json.JSONDecodeError, AIError) as exc:
             self._json(400, {"error": str(exc)})
         except Exception:
             self._json(500, {"error": "Unexpected local server error."})

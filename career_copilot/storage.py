@@ -37,3 +37,10 @@ class Storage:
     def load_analysis(self) -> dict[str, Any] | None:
         path = self.root / "latest_analysis.json"
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+    def save_materials(self, materials: dict[str, Any]) -> None:
+        self._write(self.root / "latest_materials.json", materials)
+
+    def load_materials(self) -> dict[str, Any] | None:
+        path = self.root / "latest_materials.json"
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None

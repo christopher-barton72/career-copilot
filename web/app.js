@@ -73,6 +73,8 @@ function render(analysis) {
   ] : [];
   const requirements = requirementItems.length ? requirementItems.map(item => `<li class="requirement ${item.met ? 'met' : 'unmet'}"><span>${item.met ? 'Met' : 'Not verified'}</span>${esc(item.label)}</li>`).join('') : '<li class="empty-item">No explicit must-have requirements were detected.</li>';
   const recommendationClass = analysis.recommendation.toLowerCase().replaceAll(' ', '-');
+  const ai = analysis.ai_assessment;
+  const aiPanel = ai ? `<section class="card ai-assessment"><div class="card-heading"><div><span class="kicker">Senior headhunter AI</span><h3>Interview competitiveness</h3></div><span class="count-badge">${ai.confidence_score}/100</span></div><p><strong>${esc(ai.recommendation)}</strong> &mdash; ${esc(ai.rationale)}</p><h4>Recruiter concerns</h4><ul class="finding-list">${listItems(ai.concerns, 'No additional concerns identified.')}</ul><p class="fine-print">AI confidence is advisory, not a hiring probability. Hard eligibility checks remain authoritative.</p></section>` : analysis.ai_error ? `<section class="card"><span class="kicker">AI unavailable</span><p>${esc(analysis.ai_error)} Deterministic analysis completed normally.</p></section>` : '';
 
   $('#analysis').hidden = false;
   $('#analysis').innerHTML = `
@@ -83,7 +85,7 @@ function render(analysis) {
     <section aria-labelledby="score-heading"><div class="content-heading"><div><span class="kicker">Fit breakdown</span><h3 id="score-heading">How this recommendation was calculated</h3></div></div><div class="breakdown">${scores}</div></section>
     <div class="results-grid">
       <main class="results-main">
-        <section class="card"><div class="card-heading"><div><span class="kicker">Must-have check</span><h3>Explicit requirements</h3></div><span class="count-badge">${requirementItems.length}</span></div><ul class="requirement-list">${requirements}</ul></section>
+        ${aiPanel}<section class="card"><div class="card-heading"><div><span class="kicker">Must-have check</span><h3>Explicit requirements</h3></div><span class="count-badge">${requirementItems.length}</span></div><ul class="requirement-list">${requirements}</ul></section>
         <section class="card"><div class="card-heading"><div><span class="kicker">Source-grounded</span><h3>Verified evidence</h3></div><span class="count-badge">${analysis.evidence.length}</span></div>${evidence}</section>
         <section class="card"><span class="kicker">Direct overlap</span><h3>Matched skills</h3><div class="tags">${matched}</div></section>
       </main>
@@ -102,7 +104,8 @@ async function generate() {
   const button = $('#tailor'); button.disabled = true; button.textContent = 'Generating...';
   try {
     const data = await api('/api/tailor', {method: 'POST', body: '{}'}), materials = data.materials;
-    $('#material-output').innerHTML = `<section class="materials-section"><div class="content-heading"><div><span class="kicker">Evidence validated</span><h3>Your application materials</h3><p>${materials.validation.checked_fact_count} claims checked. Master resume SHA-256 unchanged.</p></div></div><div class="document-grid"><article class="document-card"><div class="document-title"><h3>Tailored resume</h3><button class="primary export" data-kind="resume">Download PDF</button></div><div class="materials">${esc(materials.tailored_resume)}</div></article><article class="document-card"><div class="document-title"><h3>Cover letter</h3><button class="primary export" data-kind="cover_letter">Download PDF</button></div><div class="materials">${esc(materials.cover_letter)}</div></article></div></section>`;
+    const review = materials.ai_review ? ` AI review: ${materials.ai_review.professionalism_score}/100 professionalism, factual review passed.` : ' Local evidence validation passed.';
+    $('#material-output').innerHTML = `<section class="materials-section"><div class="content-heading"><div><span class="kicker">Evidence validated</span><h3>Your application materials</h3><p>${materials.validation.checked_fact_count} claims checked. Master resume SHA-256 unchanged.${review}</p></div></div><div class="document-grid"><article class="document-card"><div class="document-title"><h3>Tailored resume</h3><button class="primary export" data-kind="resume">Download PDF</button></div><div class="materials">${esc(materials.tailored_resume)}</div></article><article class="document-card"><div class="document-title"><h3>Cover letter</h3><button class="primary export" data-kind="cover_letter">Download PDF</button></div><div class="materials">${esc(materials.cover_letter)}</div></article></div></section>`;
     $$('.export').forEach(exportButton => exportButton.onclick = () => downloadPdf(exportButton.dataset.kind));
   } catch (error) { alert(error.message); }
   finally { button.disabled = false; button.textContent = 'Generate materials'; }
@@ -117,4 +120,9 @@ async function downloadPdf(kind) {
 
 function esc(value) { const div = document.createElement('div'); div.textContent = value ?? ''; return div.innerHTML; }
 
-Promise.all([api('/api/profile'), api('/api/analysis')]).then(([profile, analysis]) => { fillProfile(profile.profile); if (analysis.analysis) render(analysis.analysis); }).catch(() => {});
+Promise.all([api('/api/profile'), api('/api/analysis'), api('/api/health')]).then(([profile, analysis, health]) => {
+  fillProfile(profile.profile); if (analysis.analysis) render(analysis.analysis);
+  const status = $('#runtime-status');
+  if (health.ai.ready) { status.textContent = `● AI enabled · ${health.ai.model}`; status.title = health.ai.privacy_notice; }
+  else if (health.ai.enabled) { status.textContent = '● AI needs API key'; status.title = health.ai.configuration_error; }
+}).catch(() => {});
