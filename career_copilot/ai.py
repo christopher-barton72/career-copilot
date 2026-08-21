@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from .models import CareerProfile
@@ -12,6 +13,7 @@ from .validator import validate_fact_ids
 
 
 API_URL = "https://api.openai.com/v1/responses"
+OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 
 
 class AIError(RuntimeError):
@@ -23,15 +25,22 @@ class AIConfig:
     enabled: bool
     model: str
     api_key: str
+    provider: str = "openai"
+    base_url: str = API_URL
 
     @classmethod
     def from_env(cls) -> "AIConfig":
         enabled = os.environ.get("CAREER_COPILOT_AI", "").lower() in {"1", "true", "yes", "on"}
-        return cls(enabled, os.environ.get("CAREER_COPILOT_AI_MODEL", "gpt-5.2"), os.environ.get("OPENAI_API_KEY", ""))
+        provider = os.environ.get("CAREER_COPILOT_AI_PROVIDER", "ollama").strip().lower()
+        if provider not in {"ollama", "openai"}:
+            provider = "invalid"
+        default_model = "llama3.2" if provider == "ollama" else "gpt-5.2"
+        base_url = os.environ.get("CAREER_COPILOT_OLLAMA_URL", OLLAMA_URL) if provider == "ollama" else API_URL
+        return cls(enabled, os.environ.get("CAREER_COPILOT_AI_MODEL", default_model), os.environ.get("OPENAI_API_KEY", ""), provider, base_url)
 
     @property
     def ready(self) -> bool:
-        return self.enabled and bool(self.api_key)
+        return self.enabled and self.provider in {"ollama", "openai"} and (self.provider == "ollama" or bool(self.api_key))
 
 
 Transport = Callable[[dict[str, Any], str], dict[str, Any]]
@@ -42,9 +51,10 @@ def status(config: AIConfig | None = None) -> dict[str, Any]:
     return {
         "enabled": config.enabled,
         "ready": config.ready,
+        "provider": config.provider if config.enabled else None,
         "model": config.model if config.enabled else None,
-        "privacy_notice": "When enabled, the master resume and job posting are sent to OpenAI for processing.",
-        "configuration_error": "OPENAI_API_KEY is not set." if config.enabled and not config.api_key else None,
+        "privacy_notice": ("AI processing stays on this computer through Ollama." if config.provider == "ollama" else "The master resume and job posting are sent to OpenAI for processing."),
+        "configuration_error": ("OPENAI_API_KEY is not set." if config.enabled and config.provider == "openai" and not config.api_key else "CAREER_COPILOT_AI_PROVIDER must be ollama or openai." if config.enabled and config.provider == "invalid" else None),
     }
 
 
@@ -64,6 +74,20 @@ def _http_transport(payload: dict[str, Any], api_key: str) -> dict[str, Any]:
         raise AIError("AI service could not be reached.") from exc
 
 
+def _ollama_transport(payload: dict[str, Any], base_url: str) -> dict[str, Any]:
+    parsed = urlparse(base_url)
+    if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise AIError("Ollama URL must be a local HTTP address.")
+    request = Request(base_url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urlopen(request, timeout=180) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise AIError(f"Ollama request failed with HTTP {exc.code}.") from exc
+    except (URLError, TimeoutError) as exc:
+        raise AIError("Ollama is not reachable. Start Ollama and confirm the selected model is installed.") from exc
+
+
 def _request_json(
     name: str,
     instructions: str,
@@ -74,15 +98,14 @@ def _request_json(
 ) -> dict[str, Any]:
     if not config.ready:
         raise AIError("AI is not configured.")
-    payload = {
-        "model": config.model,
-        "store": False,
-        "instructions": instructions,
-        "input": json.dumps(input_data, ensure_ascii=False),
-        "text": {"format": {"type": "json_schema", "name": name, "strict": True, "schema": schema}},
-    }
-    response = (transport or _http_transport)(payload, config.api_key)
-    output_text = response.get("output_text")
+    if config.provider == "ollama":
+        payload = {"model": config.model, "stream": False, "format": schema, "options": {"temperature": 0, "num_ctx": 16384}, "messages": [{"role": "system", "content": instructions}, {"role": "user", "content": json.dumps(input_data, ensure_ascii=False)}]}
+        response = (transport or _ollama_transport)(payload, config.base_url)
+        output_text = response.get("message", {}).get("content")
+    else:
+        payload = {"model": config.model, "store": False, "instructions": instructions, "input": json.dumps(input_data, ensure_ascii=False), "text": {"format": {"type": "json_schema", "name": name, "strict": True, "schema": schema}}}
+        response = (transport or _http_transport)(payload, config.api_key)
+        output_text = response.get("output_text")
     if not output_text:
         for item in response.get("output", []):
             for content in item.get("content", []):
@@ -131,7 +154,7 @@ def assess_fit(profile: CareerProfile, analysis: dict[str, Any], config: AIConfi
         result["confidence_score"] = min(result["confidence_score"], 59)
         if result["recommendation"] in {"PRIORITY APPLY", "APPLY"}:
             result["recommendation"] = "STRETCH"
-    result.update({"provider": "OpenAI", "model": config.model, "evidence_validation": validation})
+    result.update({"provider": "Ollama (local)" if config.provider == "ollama" else "OpenAI", "model": config.model, "evidence_validation": validation})
     return result
 
 

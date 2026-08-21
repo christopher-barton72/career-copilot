@@ -123,6 +123,6 @@ function esc(value) { const div = document.createElement('div'); div.textContent
 Promise.all([api('/api/profile'), api('/api/analysis'), api('/api/health')]).then(([profile, analysis, health]) => {
   fillProfile(profile.profile); if (analysis.analysis) render(analysis.analysis);
   const status = $('#runtime-status');
-  if (health.ai.ready) { status.textContent = `● AI enabled · ${health.ai.model}`; status.title = health.ai.privacy_notice; }
+  if (health.ai.ready) { status.textContent = `● ${health.ai.provider} AI · ${health.ai.model}`; status.title = health.ai.privacy_notice; }
   else if (health.ai.enabled) { status.textContent = '● AI needs API key'; status.title = health.ai.configuration_error; }
 }).catch(() => {});

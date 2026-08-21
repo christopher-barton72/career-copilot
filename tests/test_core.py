@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from career_copilot.analyzer import analyze, extract_salary
 from career_copilot.profile import build_profile
@@ -144,6 +145,34 @@ class CoreTests(unittest.TestCase):
         self.assertFalse(result["ready"])
         self.assertIsNotNone(result["configuration_error"])
         self.assertNotIn("secret", str(result).lower())
+
+    def test_ollama_is_default_ai_provider_and_needs_no_key(self):
+        with patch.dict("os.environ", {"CAREER_COPILOT_AI": "true"}, clear=True):
+            config = AIConfig.from_env()
+        self.assertEqual(config.provider, "ollama")
+        self.assertEqual(config.model, "llama3.2")
+        self.assertTrue(config.ready)
+        self.assertEqual(config.base_url, "http://127.0.0.1:11434/api/chat")
+
+    def test_ollama_uses_local_structured_chat_request(self):
+        analysis = analyze(self.profile, {"title": "Architect", "description": JOB})
+        fact_id = self.profile.facts[0].id
+        def transport(payload, endpoint):
+            self.assertEqual(endpoint, "http://127.0.0.1:11434/api/chat")
+            self.assertFalse(payload["stream"])
+            self.assertEqual(payload["options"]["temperature"], 0)
+            self.assertEqual(payload["options"]["num_ctx"], 16384)
+            self.assertEqual(payload["format"]["type"], "object")
+            value = {"confidence_score": 82, "recommendation": "APPLY", "rationale": "Relevant verified evidence.", "strengths": [{"fact_id": fact_id, "reason": "Relevant."}], "concerns": [], "interview_questions": []}
+            return {"message": {"content": __import__("json").dumps(value)}}
+        config = AIConfig(True, "llama3.2", "", "ollama", "http://127.0.0.1:11434/api/chat")
+        result = assess_fit(self.profile, analysis, config, transport)
+        self.assertEqual(result["provider"], "Ollama (local)")
+
+    def test_remote_ollama_url_is_not_ready_for_transport(self):
+        from career_copilot.ai import _ollama_transport
+        with self.assertRaises(AIError):
+            _ollama_transport({}, "http://example.com:11434/api/chat")
 
     def test_ai_headhunter_cannot_override_a_deterministic_skip(self):
         analysis = analyze(self.profile, {"title": "Architect", "location": "New York, NY", "description": JOB + " This is an on-site role in New York."})
