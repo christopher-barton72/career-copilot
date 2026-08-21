@@ -135,6 +135,11 @@ class CoreTests(unittest.TestCase):
         self.assertNotIn(b"fact_abcdef1234", pdf)
         self.assertIn(b"Verified claim", pdf)
 
+    def test_pdf_uses_professional_branding_without_internal_footer(self):
+        pdf = render_pdf("Resume", "Jordan Example\nArchitect\nCONTACT: jordan@example.com | 555-555-5555\n\nPROFESSIONAL SUMMARY\nVerified summary\n\nTARGET\nArchitect at Acme", "resume")
+        self.assertIn(b"0.08 0.31 0.49 rg", pdf)
+        self.assertNotIn(b"Career Copilot - evidence-validated draft", pdf)
+
     def test_pdf_kind_is_validated(self):
         with self.assertRaises(ValueError):
             render_pdf("Document", "content", "portfolio")
@@ -257,6 +262,19 @@ class CoreTests(unittest.TestCase):
         materials = {"tailored_resume": f"- {cited.text} [{cited.id}]", "cover_letter": "Thank you."}
         result = review_materials(self.profile, analysis, materials, AIConfig(True, "test-model", "secret"), transport)
         self.assertTrue(result["passed"])
+
+    def test_ai_review_reconciles_exact_fact_false_positive(self):
+        from career_copilot.ai import review_materials
+        analysis = analyze(self.profile, {"title": "Architect", "description": JOB}); analysis["matched_skills"] = []
+        cited = self.profile.facts[0]
+        def transport(_payload, _key):
+            value = {"passed": False, "unsupported_claims": [cited.text], "professionalism_score": 88, "review_notes": []}
+            return {"output_text": __import__("json").dumps(value)}
+        materials = {"tailored_resume": f"- {cited.text} [{cited.id}]", "cover_letter": "Thank you."}
+        result = review_materials(self.profile, analysis, materials, AIConfig(True, "test-model", "secret"), transport)
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["unsupported_claims"], [])
+        self.assertEqual(result["evidence_reconciled_claims"], 1)
 
 
 if __name__ == "__main__":

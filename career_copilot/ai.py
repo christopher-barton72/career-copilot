@@ -202,10 +202,24 @@ def review_materials(profile: CareerProfile, analysis: dict[str, Any], materials
     listed_skills = analysis.get("matched_skills", [])
     def supports_listed_skill(text: str) -> bool:
         return any(re.search(rf"(?<![a-z0-9]){re.escape(skill)}(?![a-z0-9])", text, re.I) for skill in listed_skills)
-    review_facts = [{"fact_id": fact.id, "text": fact.text} for fact in profile.facts if fact.id in cited_ids or supports_listed_skill(fact.text)]
-    return _request_json(
+    def is_contact_fact(text: str) -> bool:
+        return "@" in text or "linkedin.com" in text.lower() or bool(re.search(r"\d{3}[-.) ]+\d{3}[- ]+\d{4}", text))
+    review_facts = [{"fact_id": fact.id, "text": fact.text} for fact in profile.facts if fact.id in cited_ids or supports_listed_skill(fact.text) or is_contact_fact(fact.text)]
+    result = _request_json(
         "application_material_review",
         "Act as a meticulous senior headhunter and factual reviewer. Compare every candidate claim with the verified facts. Fail if anything is invented, embellished, materially paraphrased beyond the evidence, or misleading. Exact text copied from a verified fact is supported. Job titles, company names, and neutral application language are not candidate claims. Keep every unsupported-claim excerpt and review note under 200 characters; never repeat a whole document.",
         {"job": {key: analysis["job"].get(key, "") for key in ("title", "company")}, "verified_facts": review_facts, "materials": materials},
         schema, config, transport,
     )
+    def normalized(value: str) -> str:
+        return re.sub(r"\s+", " ", value.lower().strip(" .-"))
+    fact_texts = [normalized(item["text"]) for item in review_facts]
+    false_positives=[]; unsupported=[]
+    for claim in result["unsupported_claims"]:
+        candidate=normalized(claim)
+        if candidate and any(candidate in fact or fact in candidate for fact in fact_texts): false_positives.append(claim)
+        else: unsupported.append(claim)
+    result["unsupported_claims"] = unsupported
+    result["evidence_reconciled_claims"] = len(false_positives)
+    if not unsupported and false_positives: result["passed"] = True
+    return result

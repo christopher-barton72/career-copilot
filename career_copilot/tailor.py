@@ -1,9 +1,18 @@
 from __future__ import annotations
 import hashlib
+import re
 from typing import Any
 from .models import CareerProfile
 from .validator import validate_claims
 from .ai import AIConfig, plan_materials, review_materials
+
+def _contact_line(profile: CareerProfile) -> str:
+    values=[]
+    for line in profile.master_resume.splitlines()[:15]:
+        cleaned=" ".join(line.split()).strip(" |")
+        if cleaned and ("@" in cleaned or re.search(r"\d{3}[-.) ]+\d{3}[- ]+\d{4}", cleaned) or "linkedin.com" in cleaned.lower()):
+            values.append(cleaned)
+    return " | ".join(dict.fromkeys(values))
 
 def _documents(profile: CareerProfile, analysis: dict[str, Any], evidence: list[dict[str, str]], ai_plan: dict[str, Any] | None, conservative: bool = False) -> dict[str, str]:
     title=analysis["job"].get("title") or "the target role"; company=analysis["job"].get("company") or "the organization"
@@ -17,9 +26,10 @@ def _documents(profile: CareerProfile, analysis: dict[str, Any], evidence: list[
         summary = ai_plan["resume_summary"]["text"] if ai_plan else profile.headline
         opening = ai_plan["cover_letter_opening"]["text"] if ai_plan else f"I am writing to express interest in the {title} opportunity at {company}. The role's priorities align with several areas of my verified career history."
         closing="I would welcome the opportunity to discuss how this background could support your team's goals and priorities."
-    resume=f"{profile.name}\n{profile.headline}\n\nPROFESSIONAL SUMMARY\n{summary}\n\nTARGET\n{title} at {company}\n\nRELEVANT SKILLS\n{skills}\n\nSELECTED VERIFIED EXPERIENCE (REVERSE CHRONOLOGICAL)\n{bullets}\n\nSOURCE NOTE\nThis draft is derived only from the unchanged master resume."
+    contact=_contact_line(profile); contact_row=f"\nCONTACT: {contact}" if contact else ""
+    resume=f"{profile.name}\n{profile.headline}{contact_row}\n\nPROFESSIONAL SUMMARY\n{summary}\n\nTARGET\n{title} at {company}\n\nRELEVANT SKILLS\n{skills}\n\nSELECTED VERIFIED EXPERIENCE (REVERSE CHRONOLOGICAL)\n{bullets}\n\nSOURCE NOTE\nThis draft is derived only from the unchanged master resume."
     highlights="\n".join(f"- {x['fact']} [{x['fact_id']}]" for x in evidence[:3])
-    cover=f"Dear Hiring Team,\n\n{opening}\n\nSelected verified experience:\n{highlights}\n\n{closing}\n\nSincerely,\n{profile.name}"
+    cover=f"CONTACT: {contact}\nPOSITION: {title} - {company}\n\nDear Hiring Team,\n\n{opening}\n\nSelected verified experience:\n{highlights}\n\n{closing}\n\nSincerely,\n{profile.name}"
     return {"tailored_resume": resume, "cover_letter": cover}
 
 def tailor(profile: CareerProfile, analysis: dict[str, Any], config: AIConfig | None = None, transport=None) -> dict[str, Any]:

@@ -49,7 +49,7 @@ The saved master resume is immutable during analysis, tailoring, and export. Tai
 
 ## PDF export
 
-`POST /api/export` with JSON `{ "kind": "resume" }` or `{ "kind": "cover_letter" }` returns a dependency-free, paginated PDF. The format prioritizes readable typography, predictable margins, and reliable text extraction.
+`POST /api/export` with JSON `{ "kind": "resume" }` or `{ "kind": "cover_letter" }` returns a dependency-free, paginated PDF. Resume and cover-letter exports share a professional navy identity, centered contact header, restrained rules and shaded callouts, compact section hierarchy, protected bottom margins, and page numbering. Internal evidence IDs and Career Copilot validation labels are never printed in applicant-facing PDFs.
 
 ## Optional AI headhunter and drafting review
 
